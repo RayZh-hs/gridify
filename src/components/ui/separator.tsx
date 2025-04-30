@@ -28,4 +28,5 @@ const Separator = React.forwardRef<
 )
 Separator.displayName = SeparatorPrimitive.Root.displayName
 
+// Export the component
 export { Separator }
