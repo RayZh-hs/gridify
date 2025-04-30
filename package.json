@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack -p 9002",
+    "dev": "next dev -p 9002",
     "genkit:dev": "genkit start -- tsx src/ai/dev.ts",
     "genkit:watch": "genkit start -- tsx --watch src/ai/dev.ts",
     "build": "next build",
@@ -44,7 +44,7 @@
     "genkit": "^1.0.4",
     "jspdf": "^2.5.1",
     "lucide-react": "^0.475.0",
-    "next": "15.2.3",
+    "next": "15.3.1",
     "patch-package": "^8.0.0",
     "react": "^18.3.1",
     "react-day-picker": "^8.10.1",
@@ -53,6 +53,7 @@
     "recharts": "^2.15.1",
     "tailwind-merge": "^3.0.1",
     "tailwindcss-animate": "^1.0.7",
+    "vercel": "^41.7.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
