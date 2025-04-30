@@ -17,6 +17,7 @@ Short story: I got bored of manually aligning images for every physics experimen
 *   **🖼️ Easy Image Upload:** Click in any cell to upload images, easy as that!
 *   **📐 Flexible Grid Layout:** You decide how many rows and columns you need. Want a 2x3 grid? A 5x4? Go for it!
 *   **📄 Page Setup:** Choose standard page sizes (like A4, Letter) and orientation (portrait or landscape) to fit your needs.
+*   **🏷️ Label Ready:** Optionally add labels below your images.
 *   **📥 Pdf Export:** Once your grid looks perfect, hit the export button and get a neatly formatted PDF document. Great for sharing or printing.
 <!-- Waiting for deployment -->
 <!-- *   **🚀 Lightweight & Online:** Nothing to install. Just open the webpage and start gridifying. -->
