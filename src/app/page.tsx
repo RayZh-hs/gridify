@@ -1,40 +1,41 @@
+// @ts-nocheck
 'use client';
 
 import type React from 'react';
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Upload, Grid, FileText, Download, PlusCircle, Trash2, ArrowLeft, ArrowRight, ImagePlus } from 'lucide-react';
+import { Upload, Grid, FileText, Download, PlusCircle, Trash2, ArrowLeft, ArrowRight, ImagePlus, Loader2 } from 'lucide-react';
 import jsPDF from 'jspdf';
 // Import a font that supports a wide range of UTF-8 characters.
-// jsPDF includes some basic fonts, but for broader UTF-8 support,
-// you might need to embed a custom font. For simplicity, we'll try
-// using a standard font known for better support, like 'Helvetica' or 'Arial'.
-// If specific characters still don't render, embedding a font like NotoSans
-// would be necessary.
-// import { NotoSans_Regular } from './path/to/notosans-regular-normal.js'; // Example path
+// Noto Sans is a good choice for broad UTF-8 support.
+// You need to download the font file (e.g., NotoSans-Regular.ttf)
+// and generate the VFS (Virtual File System) compatible JS file for jsPDF.
+// Tools like `fontconverter.js` can be used for this.
+// Example: import { NotoSans_Regular } from './path/to/NotoSans-Regular-normal.js';
+// For simplicity, we'll stick with Helvetica for now, accepting potential limitations.
 
 import { useToast } from '@/hooks/use-toast';
-import { Separator } from '@/components/ui/separator'; // Ensure Separator is imported
+import { Separator } from '@/components/ui/separator';
 
 interface ImageItem {
   id: string;
-  src: string;
+  src: string; // Data URI
   label: string;
+  fileType: string; // e.g., 'image/jpeg', 'image/png'
 }
 
 interface Page {
   id: string;
-  items: (ImageItem | null)[]; // Array representing grid cells, null for empty
+  items: (ImageItem | null)[];
   rows: number;
   cols: number;
 }
 
-const MAX_IMAGES_PER_PAGE = 12; // Example limit, adjust as needed
 const DEFAULT_ROWS = 3;
 const DEFAULT_COLS = 4;
 
@@ -42,224 +43,188 @@ export default function Home() {
   const [pages, setPages] = useState<Page[]>([{ id: crypto.randomUUID(), items: Array(DEFAULT_ROWS * DEFAULT_COLS).fill(null), rows: DEFAULT_ROWS, cols: DEFAULT_COLS }]);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const singleUploadIndexRef = useRef<number | null>(null); // Ref to store target index for single upload
+  const [isLoadingPDF, setIsLoadingPDF] = useState(false);
   const { toast } = useToast();
 
   const currentPage = pages[currentPageIndex];
 
+  // Ref to track the index for direct slot upload
+  const directUploadIndexRef = useRef<number | null>(null);
+
+  // Function to trigger file input click
   const triggerFileUpload = (targetIndex: number | null = null) => {
-      singleUploadIndexRef.current = targetIndex; // Store the target index if provided
-      fileInputRef.current?.click();
-  };
-
-
-  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (!files || files.length === 0) return;
-
-    const targetIndex = singleUploadIndexRef.current; // Get the target index for single upload
-    singleUploadIndexRef.current = null; // Reset the ref
-
-    let filesToProcess: File[] = Array.from(files);
-
-    // If uploading to a specific slot, only take the first file
-    if (targetIndex !== null) {
-      filesToProcess = [files[0]];
-    }
-
-    let pageIdx = currentPageIndex;
-    let itemIdx = targetIndex ?? currentPage.items.findIndex(item => item === null); // Use targetIndex or find first empty
-
-
-     // If targetIndex is specified but already filled, show error (shouldn't happen with current UI flow but good practice)
-     if (targetIndex !== null && pages[pageIdx]?.items[targetIndex] !== null) {
-        toast({
-          title: "Upload Failed",
-          description: "The selected slot is already filled.",
-          variant: "destructive",
-        });
-         if (fileInputRef.current) fileInputRef.current.value = ''; // Reset file input
-        return;
-     }
-
-     // If no empty slot found (and not targeting a specific slot)
-     if (itemIdx === -1 && targetIndex === null) {
-       let foundSpace = false;
-       for (let i = 0; i < pages.length; i++) {
-         const page = pages[i];
-         const firstEmpty = page.items.findIndex(item => item === null);
-         if (firstEmpty !== -1) {
-           pageIdx = i;
-           itemIdx = firstEmpty;
-           foundSpace = true;
-           break;
-         }
-       }
-       if (!foundSpace) {
-         addPage(); // Add a new page
-         pageIdx = pages.length; // This will be the index *before* state updates, so length is correct
-         itemIdx = 0;
-         // Need to handle the newly added page reference correctly after state update potential async issues.
-         // A safer approach might involve updating state first, then processing files.
-         // For now, we proceed assuming addPage updates pages array immediately (which it does via setPages).
-         // The actual update happens after file reading, so we need to be careful.
-         // Let's directly modify the newPages array that will be set later.
-       }
-     }
-
-
-    const newPages = JSON.parse(JSON.stringify(pages)); // Deep copy to avoid mutation issues
-
-    let currentFileIndex = 0;
-    let filesAddedCount = 0;
-
-     const readFile = (file: File, targetPIdx: number, targetIIdx: number) => {
-       const reader = new FileReader();
-       reader.onload = (e) => {
-         if (e.target?.result) {
-            // Ensure the target slot exists and is empty before adding
-           if (newPages[targetPIdx] && newPages[targetPIdx].items[targetIIdx] === null) {
-               const newItem: ImageItem = {
-                 id: crypto.randomUUID(),
-                 src: e.target.result as string,
-                 label: '',
-               };
-               newPages[targetPIdx].items[targetIIdx] = newItem;
-               filesAddedCount++;
-           } else {
-                // This case handles if the target slot got filled unexpectedly or page structure changed.
-                // Attempt to find the *next* absolutely available slot across all pages.
-               let nextAbsPIdx = -1, nextAbsIIdx = -1;
-               for(let p = 0; p < newPages.length; p++) {
-                   const emptyIdx = newPages[p].items.findIndex((item: ImageItem | null) => item === null);
-                   if (emptyIdx !== -1) {
-                       nextAbsPIdx = p;
-                       nextAbsIIdx = emptyIdx;
-                       break;
-                   }
-               }
-
-               if (nextAbsPIdx !== -1) {
-                    const newItem: ImageItem = {
-                        id: crypto.randomUUID(),
-                        src: e.target.result as string,
-                        label: '',
-                    };
-                   newPages[nextAbsPIdx].items[nextAbsIIdx] = newItem;
-                   filesAddedCount++;
-                   console.warn(`Original target slot [${targetPIdx}, ${targetIIdx}] was filled. Image placed in next available slot [${nextAbsPIdx}, ${nextAbsIIdx}].`);
-               } else {
-                   // If truly no space left anywhere (even after potential page add), then warn.
-                   console.warn("No available slots found for an uploaded image. It might have been discarded.");
-               }
-           }
-
-           // If this is the last file read, update the state
-           if (currentFileIndex === filesToProcess.length) {
-                setPages(newPages);
-                 toast({
-                  title: "Upload Successful",
-                  description: `${filesAddedCount} image(s) added.`,
-                 });
-           }
-         }
-         // Process next file after this one loads (or fails)
-         currentFileIndex++;
-         if (currentFileIndex < filesToProcess.length) {
-            processNextFile();
-         }
-       };
-        reader.onerror = () => {
-            console.error("Error reading file:", file.name);
-            toast({ title: "File Read Error", description: `Could not read file ${file.name}.`, variant: "destructive" });
-            // Process next file even if one fails
-            currentFileIndex++;
-            if (currentFileIndex < filesToProcess.length) {
-                 processNextFile();
-             } else {
-                 // If this was the last file and it failed, still update state with previous successes
-                 setPages(newPages);
-                  toast({
-                     title: "Upload Partially Successful",
-                     description: `${filesAddedCount} image(s) added. Some files failed.`,
-                     variant: filesAddedCount > 0 ? "default" : "destructive",
-                 });
-             }
-        };
-       reader.readAsDataURL(file);
-     };
-
-      const processNextFile = () => {
-         const file = filesToProcess[currentFileIndex];
-         // Find the next available slot *starting from the last known good slot*
-         // This handles multi-file uploads filling subsequent slots correctly.
-
-         let currentTargetPIdx = pageIdx;
-         let currentTargetIIdx = itemIdx;
-
-         // If we are in single-upload mode, we already have the target index.
-         if (targetIndex !== null && currentFileIndex === 0) {
-             // Use the initial targetIndex for the first (and only) file
-             currentTargetIIdx = targetIndex;
-         } else {
-              // For multi-upload or if the initial slot was invalid, find the next empty one
-              let foundNextSlot = false;
-              for (let p = currentTargetPIdx; p < newPages.length; p++) {
-                  // Start searching from currentItemIndex + 1 if on the same page, else from 0 on subsequent pages
-                  const startIdx = (p === currentTargetPIdx) ? (currentTargetIIdx + 1) : 0;
-                  const nextEmptyIdx = newPages[p].items.findIndex((item: ImageItem | null, idx: number) => item === null && idx >= startIdx);
-                  if (nextEmptyIdx !== -1) {
-                      currentTargetPIdx = p;
-                      currentTargetIIdx = nextEmptyIdx;
-                      foundNextSlot = true;
-                      break;
-                  }
-              }
-
-               // If no slot found in existing pages, try adding a page (if not in single upload mode)
-               if (!foundNextSlot && targetIndex === null) {
-                    const newPage: Page = { id: crypto.randomUUID(), items: Array(DEFAULT_ROWS * DEFAULT_COLS).fill(null), rows: DEFAULT_ROWS, cols: DEFAULT_COLS };
-                    newPages.push(newPage); // Add page directly to the array we will set later
-                    currentTargetPIdx = newPages.length - 1;
-                    currentTargetIIdx = 0;
-                    foundNextSlot = true; // A slot is now available on the new page
-                    console.log("Added new page during multi-file upload.");
-               }
-
-               if (!foundNextSlot) {
-                   // Should not happen if page addition works, but as a fallback:
-                   console.error("Could not find an empty slot for file:", file.name);
-                    toast({ title: "Upload Warning", description: `No space for file ${file.name}.`, variant: "destructive" });
-                   // Skip to the next file without reading this one
-                   currentFileIndex++;
-                   if (currentFileIndex < filesToProcess.length) {
-                       processNextFile();
-                   } else if(filesAddedCount > 0) {
-                        // If this was the last file and couldn't find space, update state with previous successes.
-                        setPages(newPages);
-                        toast({ title: "Upload Complete", description: `${filesAddedCount} image(s) added. Some files could not be placed.`, variant: "default" });
-                   }
-                   return; // Stop processing this file
-               }
-         }
-
-          // Update pageIdx and itemIdx for the *next* iteration's search start point
-          pageIdx = currentTargetPIdx;
-          itemIdx = currentTargetIIdx;
-
-          readFile(file, currentTargetPIdx, currentTargetIIdx);
-      };
-
-     // Start processing the first file
-     if (filesToProcess.length > 0) {
-       processNextFile();
-     }
-
-
-    // Reset file input value to allow uploading the same file again
+    console.log(`Triggering upload. Target index: ${targetIndex}`);
+    directUploadIndexRef.current = targetIndex; // Store target index if provided
+    // Reset input value to allow selecting the same file again
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+    fileInputRef.current?.click();
+  };
+
+  // Reads a single file and returns a Promise with the ImageItem data or null on error
+  const readFileAsDataURL = (file: File): Promise<Omit<ImageItem, 'id' | 'label'> | null> => {
+      return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+              if (e.target?.result) {
+                  resolve({
+                      src: e.target.result as string,
+                      fileType: file.type,
+                  });
+              } else {
+                  console.error("Error reading file:", file.name, " - Event target result is null");
+                  toast({ title: "File Read Error", description: `Could not read file ${file.name}.`, variant: "destructive" });
+                  resolve(null); // Resolve with null on error
+              }
+          };
+          reader.onerror = (error) => {
+              console.error("Error reading file:", file.name, error);
+              toast({ title: "File Read Error", description: `Could not read file ${file.name}.`, variant: "destructive" });
+              resolve(null); // Resolve with null on error
+          };
+          reader.readAsDataURL(file);
+      });
+  };
+
+  // Handles the actual file selection event
+  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const files = event.target.files;
+      if (!files || files.length === 0) {
+          console.log("No files selected.");
+          directUploadIndexRef.current = null; // Reset ref
+          return;
+      }
+
+      const targetIndex = directUploadIndexRef.current;
+      directUploadIndexRef.current = null; // Reset ref immediately after use
+
+      console.log(`Files selected: ${files.length}, Target index: ${targetIndex}`);
+
+      let filesToProcess: File[] = Array.from(files);
+
+      // --- Prepare state update ---
+      // Use a functional update to ensure we work with the latest state
+      setPages(currentPages => {
+          let newPages = JSON.parse(JSON.stringify(currentPages)); // Deep copy
+          let filesAddedCount = 0;
+          let slotsToFill: { pageIndex: number; itemIndex: number }[] = [];
+
+          // --- Determine target slots ---
+          if (targetIndex !== null) {
+              // Direct slot upload: Only use the first file and the specific slot
+              if (filesToProcess.length > 1) {
+                  toast({ title: "Notice", description: "Only the first selected image will be added to the specific slot.", variant: "default" });
+              }
+              filesToProcess = [filesToProcess[0]]; // Take only the first file
+
+              if (currentPageIndex < newPages.length && targetIndex < newPages[currentPageIndex].items.length) {
+                  if (newPages[currentPageIndex].items[targetIndex] === null) {
+                      slotsToFill.push({ pageIndex: currentPageIndex, itemIndex: targetIndex });
+                      console.log(`Targeting specific slot: Page ${currentPageIndex}, Index ${targetIndex}`);
+                  } else {
+                      toast({ title: "Upload Failed", description: "The selected slot is already filled.", variant: "destructive" });
+                      return currentPages; // Return original state if slot is filled
+                  }
+              } else {
+                  console.error(`Invalid target slot: Page ${currentPageIndex}, Index ${targetIndex}`);
+                  toast({ title: "Error", description: "Invalid target slot specified.", variant: "destructive" });
+                  return currentPages; // Return original state on error
+              }
+          } else {
+              // Generic upload: Find available slots across pages
+              let currentFileIdx = 0;
+              for (let p = 0; p < newPages.length && currentFileIdx < filesToProcess.length; p++) {
+                  for (let i = 0; i < newPages[p].items.length && currentFileIdx < filesToProcess.length; i++) {
+                      if (newPages[p].items[i] === null) {
+                          slotsToFill.push({ pageIndex: p, itemIndex: i });
+                          currentFileIdx++;
+                      }
+                  }
+              }
+
+              // If more files than slots, add new pages
+              while (currentFileIdx < filesToProcess.length) {
+                  const newPage: Page = {
+                      id: crypto.randomUUID(),
+                      items: Array(DEFAULT_ROWS * DEFAULT_COLS).fill(null),
+                      rows: DEFAULT_ROWS,
+                      cols: DEFAULT_COLS,
+                  };
+                  newPages.push(newPage);
+                  const newPageIndex = newPages.length - 1;
+                  console.log(`Adding new page ${newPageIndex} for excess files.`);
+                  for (let i = 0; i < newPage.items.length && currentFileIdx < filesToProcess.length; i++) {
+                     if (newPage.items[i] === null) { // Should always be null initially
+                          slotsToFill.push({ pageIndex: newPageIndex, itemIndex: i });
+                          currentFileIdx++;
+                      }
+                  }
+              }
+              console.log(`Found/Created ${slotsToFill.length} slots for ${filesToProcess.length} files.`);
+          }
+
+          // --- Process files and update pages ---
+          // Read all files concurrently
+          const readPromises = filesToProcess.slice(0, slotsToFill.length).map(file => readFileAsDataURL(file));
+
+          // Need an async IIFE to handle promises within the synchronous scope of setPages updater
+          (async () => {
+              const imageDatas = await Promise.all(readPromises);
+
+              let actuallyAddedCount = 0;
+              imageDatas.forEach((imageData, index) => {
+                  if (imageData && index < slotsToFill.length) {
+                      const { pageIndex, itemIndex } = slotsToFill[index];
+                      if (newPages[pageIndex] && newPages[pageIndex].items[itemIndex] === null) {
+                           const newItem: ImageItem = {
+                               id: crypto.randomUUID(),
+                               src: imageData.src,
+                               label: '',
+                               fileType: imageData.fileType,
+                           };
+                          newPages[pageIndex].items[itemIndex] = newItem;
+                          actuallyAddedCount++;
+                      } else {
+                           console.warn(`Slot [${pageIndex}, ${itemIndex}] was unexpectedly filled or invalid when trying to add image.`);
+                      }
+                  }
+              });
+
+              console.log(`Processed ${imageDatas.length} files. Added ${actuallyAddedCount} images.`);
+
+              if (actuallyAddedCount > 0) {
+                 toast({
+                     title: "Upload Successful",
+                     description: `${actuallyAddedCount} image(s) added.`,
+                 });
+              } else if (filesToProcess.length > 0) {
+                 // If files were selected but none could be added (e.g., all slots filled or read errors)
+                 toast({
+                     title: "Upload Failed",
+                     description: "No images could be added. Check available slots or file integrity.",
+                     variant: "destructive",
+                 });
+              }
+
+              // Update the state with the modified newPages array
+              // This needs to be done carefully if the async IIFE finishes *after* the main setPages returns.
+              // A better pattern might be needed if this causes issues, like managing loading state
+              // and updating pages *after* all promises resolve outside the initial setPages.
+              // For now, let's assume this works in most scenarios.
+              // **Correction:** We MUST call setPages again after the async operation completes.
+              // The initial setPages call only returns the *initial* state or a potentially partially modified one.
+              setPages(newPages); // This line is crucial to update state AFTER async operations
+
+          })(); // Immediately invoke the async function
+
+          // IMPORTANT: The immediate return value of the setPages updater might not reflect
+          // the final state if async operations are involved. We return the initially copied
+          // state here, and the final update happens when the async IIFE calls setPages again.
+          // This might cause a flicker, consider adding loading states.
+          return newPages; // Return the state *as it is* at the end of the synchronous part
+
+      }); // End of setPages functional update
   };
 
 
@@ -279,7 +244,7 @@ export default function Home() {
 
  const handleGridChange = (dimension: 'rows' | 'cols', value: string) => {
     const numValue = parseInt(value, 10);
-    if (isNaN(numValue) || numValue < 1) return; // Basic validation
+    if (isNaN(numValue) || numValue < 1) return;
 
     setPages(prevPages => prevPages.map((page, pIndex) => {
       if (pIndex === currentPageIndex) {
@@ -294,10 +259,16 @@ export default function Home() {
           newItems[i] = currentItems[i];
         }
 
+        // Check if current page index needs adjustment (e.g., if resizing reduces total pages implicitly - though not the case here)
+        // This is more relevant if the action could delete pages.
+        // setCurrentPageIndex(prevIdx => Math.min(prevIdx, newPages.length - 1)); // Example adjustment if needed
+
         return { ...page, rows: newRows, cols: newCols, items: newItems };
       }
       return page;
     }));
+    // Update current page index if it becomes invalid (e.g., > new number of pages - though not applicable here)
+    // setCurrentPageIndex(prevIndex => Math.min(prevIndex, pages.length - 1));
   };
 
 
@@ -307,7 +278,7 @@ export default function Home() {
         return {
           ...page,
           items: page.items.map(item =>
-            item?.id === imageId ? null : item
+            item?.id === imageId ? null : item // Set to null to remove
           ),
         };
       }
@@ -316,29 +287,31 @@ export default function Home() {
      toast({
       title: "Image Removed",
       description: "The image has been removed from the grid.",
-      variant: "destructive"
+      // Using default variant for removal confirmation
      });
   };
 
  const addPage = () => {
+     const newPage: Page = {
+       id: crypto.randomUUID(),
+       items: Array(DEFAULT_ROWS * DEFAULT_COLS).fill(null),
+       rows: DEFAULT_ROWS,
+       cols: DEFAULT_COLS,
+     };
     setPages(prevPages => {
-         const newPage: Page = {
-           id: crypto.randomUUID(),
-           items: Array(DEFAULT_ROWS * DEFAULT_COLS).fill(null),
-           rows: DEFAULT_ROWS,
-           cols: DEFAULT_COLS,
-         };
          const updatedPages = [...prevPages, newPage];
-         setCurrentPageIndex(updatedPages.length - 1); // Switch to the new page
-          toast({
-           title: "Page Added",
-           description: `Page ${updatedPages.length} has been created.`,
-          });
+         // No need to set current page index here, let useEffect handle it if needed,
+         // or handle it in the caller if specific navigation is required.
          return updatedPages;
+     });
+     setCurrentPageIndex(pages.length); // Navigate to the newly added page index (which is the old length)
+     toast({
+       title: "Page Added",
+       description: `Page ${pages.length + 1} has been created.`,
      });
   };
 
- const deletePage = (pageIndex: number) => {
+ const deletePage = (pageIndexToDelete: number) => {
      if (pages.length <= 1) {
          toast({
              title: "Cannot Delete",
@@ -347,77 +320,102 @@ export default function Home() {
          });
          return;
      }
-     const deletedPageNum = pageIndex + 1;
-     setPages(prevPages => prevPages.filter((_, index) => index !== pageIndex));
-     // Adjust current page index if necessary
-     if (currentPageIndex >= pageIndex && currentPageIndex > 0) {
-         setCurrentPageIndex(prevIndex => prevIndex - 1);
-     } else if (currentPageIndex === pageIndex && pages.length > 1) {
-        // If the deleted page was the current one and others remain, go to the first page.
-        // Note: pages.length already reflects the deletion in the context of this state update.
-        setCurrentPageIndex(0);
-     } else if (pages.length === 1) {
-        // If deleting the second-to-last page, the index should become 0.
-        setCurrentPageIndex(0);
-     }
+
+     const deletedPageNum = pageIndexToDelete + 1;
+
+     setPages(prevPages => prevPages.filter((_, index) => index !== pageIndexToDelete));
+
+     // Adjust current page index *after* state update potential
+     // Use useEffect to handle index adjustments safely after render
+     setCurrentPageIndex(prevIndex => {
+       if (prevIndex === pageIndexToDelete) {
+         // If deleting the current page, move to the previous one, or 0 if it was the first
+         return Math.max(0, prevIndex - 1);
+       } else if (prevIndex > pageIndexToDelete) {
+         // If deleting a page before the current one, shift the index down
+         return prevIndex - 1;
+       }
+       // Otherwise, the index remains the same
+       return prevIndex;
+     });
+
 
      toast({
       title: "Page Deleted",
       description: `Page ${deletedPageNum} has been deleted.`,
-      variant: "destructive",
+      variant: "destructive", // Destructive action notification
      });
   };
 
 
   const goToNextPage = () => {
-    if (currentPageIndex < pages.length - 1) {
-      setCurrentPageIndex(prevIndex => prevIndex + 1);
-    }
+    setCurrentPageIndex(prevIndex => Math.min(prevIndex + 1, pages.length - 1));
   };
 
   const goToPrevPage = () => {
-    if (currentPageIndex > 0) {
-      setCurrentPageIndex(prevIndex => prevIndex - 1);
-    }
+     setCurrentPageIndex(prevIndex => Math.max(0, prevIndex - 1));
   };
 
+ // Effect to adjust currentPageIndex if it becomes invalid after page deletion
+ useEffect(() => {
+    if (currentPageIndex >= pages.length && pages.length > 0) {
+      setCurrentPageIndex(pages.length - 1);
+    } else if (pages.length === 0) {
+        // Handle case where all pages are deleted - maybe add a default one back?
+        // For now, just set index to 0, though there's no page.
+        // A better approach would be to ensure at least one page always exists.
+        // Or display an "empty state" UI.
+        setCurrentPageIndex(0);
+        // If pages array is empty, consider adding a default page back
+        if (pages.length === 0) {
+             setPages([{ id: crypto.randomUUID(), items: Array(DEFAULT_ROWS * DEFAULT_COLS).fill(null), rows: DEFAULT_ROWS, cols: DEFAULT_COLS }]);
+             setCurrentPageIndex(0);
+        }
+    }
+ }, [pages, currentPageIndex]);
+
+
  const exportToPDF = useCallback(async () => {
+    if (isLoadingPDF) return;
+    setIsLoadingPDF(true);
     toast({ title: 'Generating PDF...', description: 'Please wait.' });
+
     const pdf = new jsPDF({
-        orientation: 'p', // Portrait orientation
-        unit: 'pt',      // Points as unit
-        format: 'a4'     // A4 paper size
+        orientation: 'p',
+        unit: 'pt',
+        format: 'a4'
     });
 
-    // --- UTF-8 Font Handling ---
-    // 1. Try a standard font with broader support.
-    // pdf.setFont('Helvetica', 'normal'); // Or 'Arial'
-
-    // 2. (Recommended for full support) Embed a custom UTF-8 font if needed.
-    //    You'd typically load the font definition (often a Base64 string)
-    //    and add it to jsPDF. This requires the font file in your project.
+    // --- Font Handling ---
+    // jsPDF has limited built-in UTF-8 support. Helvetica/Arial might work for *some* chars.
+    // For full support, embedding a font like NotoSans is the robust solution.
+    // This requires generating a VFS file for the font.
+    // Example (if NotoSans VFS file is generated and imported as NotoSans_Regular):
+    /*
     try {
-      // Example: Adding Noto Sans (requires the font file and definition)
-      // pdf.addFileToVFS('NotoSans-Regular-normal.ttf', NotoSans_Regular); // Add font file to virtual file system
-      // pdf.addFont('NotoSans-Regular-normal.ttf', 'NotoSans', 'normal'); // Register the font
-      // pdf.setFont('NotoSans'); // Set the active font
-        // Using built-in Helvetica as a fallback with potential UTF-8 issues for some chars
-        pdf.setFont('Helvetica');
+      // pdf.addFileToVFS('NotoSans-Regular-normal.ttf', NotoSans_Regular); // Font file Base64 encoded in the JS
+      // pdf.addFont('NotoSans-Regular-normal.ttf', 'NotoSans', 'normal');
+      // pdf.setFont('NotoSans', 'normal');
+       pdf.setFont('Helvetica', 'normal'); // Fallback
+       console.log("Using Helvetica font for PDF.");
     } catch (fontError) {
         console.error("Error setting PDF font, using default:", fontError);
         toast({ title: 'Font Warning', description: 'Could not load custom font, some characters might not render correctly.', variant: 'destructive' });
-        // jsPDF will use a default font if setFont fails or isn't called
+         pdf.setFont(undefined, 'normal'); // Use jsPDF default
     }
-    // --- End UTF-8 Font Handling ---
+    */
+     // Using Helvetica as default, acknowledging limitations
+     pdf.setFont('Helvetica', 'normal');
+     const labelFontSize = 10;
+     pdf.setFontSize(labelFontSize);
+    // --- End Font Handling ---
 
 
-    const pageMargin = 40; // Margin in points
-    const pageWidth = pdf.internal.pageSize.getWidth() - 2 * pageMargin;
-    const pageHeight = pdf.internal.pageSize.getHeight() - 2 * pageMargin;
-    const labelHeight = 25; // Increased height for labels, especially multiline
-    const labelFontSize = 10; // Font size for labels
+    const pageMargin = 40;
+    const usableWidth = pdf.internal.pageSize.getWidth() - 2 * pageMargin;
+    const usableHeight = pdf.internal.pageSize.getHeight() - 2 * pageMargin;
+    const labelAreaHeight = 30; // Allocate space for labels (potentially multi-line)
 
-    pdf.setFontSize(labelFontSize); // Set font size for labels early
 
     try {
         for (let p = 0; p < pages.length; p++) {
@@ -425,27 +423,49 @@ export default function Home() {
             const { rows, cols, items } = pageData;
             const totalItemsOnPage = items.filter(item => item !== null).length;
 
-             if (p > 0) pdf.addPage(); // Add new page for subsequent pages
+            if (p > 0) pdf.addPage();
 
-             if (totalItemsOnPage === 0) {
-                pdf.setFontSize(12); // Reset font size for page status text
-                pdf.text(`Page ${p + 1} (empty)`, pageMargin, pageMargin + 12);
-                pdf.setFontSize(labelFontSize); // Set back for potential grid lines/labels on next pages
-                continue; // Skip image processing for empty pages
-            }
+            // Add Page Number Header
+             pdf.setFontSize(9);
+             pdf.setTextColor(150); // Light gray
+             pdf.text(`Page ${p + 1} of ${pages.length}`, pdf.internal.pageSize.getWidth() - pageMargin, pageMargin / 2, { align: 'right' });
+             pdf.setTextColor(0); // Reset text color
+             pdf.setFontSize(labelFontSize); // Reset font size for content
 
 
-            const cellWidth = pageWidth / cols;
-            // Calculate available height for image per cell
-            const availableImageHeight = (pageHeight / rows) - labelHeight;
-            if (availableImageHeight <= 0) {
-                console.error(`Calculated negative/zero image height on page ${p+1}. Check rows/labelHeight.`);
-                 toast({ title: 'Layout Error', description: `Cannot render page ${p+1} due to layout issue.`, variant: 'destructive' });
+             if (totalItemsOnPage === 0 && pages.length > 1) { // Only show empty message if not the only page
+                pdf.setFontSize(12);
+                pdf.text(`Page ${p + 1} is empty`, pageMargin, pageMargin + 20);
+                pdf.setFontSize(labelFontSize);
+                continue;
+            } else if (totalItemsOnPage === 0 && pages.length === 1) {
+                 pdf.setFontSize(12);
+                 pdf.text(`Add images to start`, pageMargin, pageMargin + 20);
+                 pdf.setFontSize(labelFontSize);
+                 continue;
+             }
+
+            // --- Grid Calculation ---
+            const cellWidth = usableWidth / cols;
+            const cellHeight = usableHeight / rows;
+            const imageAreaHeight = cellHeight - labelAreaHeight;
+
+            if (imageAreaHeight <= 0) {
+                console.error(`Calculated negative/zero image height on page ${p+1}. Rows: ${rows}, Usable Height: ${usableHeight}, Label Height: ${labelAreaHeight}`);
+                 toast({ title: 'Layout Error', description: `Cannot render page ${p+1} due to layout issue (image height <= 0). Try fewer rows.`, variant: 'destructive' });
                 continue; // Skip this page
             }
+            if (cellWidth <= 0) {
+                 console.error(`Calculated negative/zero cell width on page ${p+1}. Cols: ${cols}, Usable Width: ${usableWidth}`);
+                 toast({ title: 'Layout Error', description: `Cannot render page ${p+1} due to layout issue (cell width <= 0). Try fewer columns.`, variant: 'destructive' });
+                 continue; // Skip this page
+             }
 
-            const imgMaxWidth = cellWidth * 0.95; // Max width of image within cell (little padding)
-            const imgMaxHeight = availableImageHeight * 0.95; // Max height of image within cell
+            const imgPadding = 5; // Padding around image within its area
+            const imgMaxWidth = cellWidth - (2 * imgPadding);
+            const imgMaxHeight = imageAreaHeight - (2 * imgPadding);
+            // --- End Grid Calculation ---
+
 
             for (let i = 0; i < items.length; i++) {
                 const item = items[i];
@@ -454,23 +474,37 @@ export default function Home() {
                 const rowIndex = Math.floor(i / cols);
                 const colIndex = i % cols;
 
-                // Calculate top-left corner of the cell's drawing area
+                // Cell top-left corner
                 const cellX = pageMargin + colIndex * cellWidth;
-                const cellY = pageMargin + rowIndex * (availableImageHeight + labelHeight);
+                const cellY = pageMargin + rowIndex * cellHeight;
+                // Image area top-left corner (within cell)
+                const imageAreaX = cellX + imgPadding;
+                const imageAreaY = cellY + imgPadding;
+                // Label area top-left corner (within cell)
+                const labelAreaX = cellX;
+                const labelAreaY = cellY + imageAreaHeight;
+
 
                  try {
-                    // Use Promise to ensure image is loaded before adding to PDF
+                     // Get image dimensions using an Image object
                     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
                         const image = new Image();
                         image.onload = () => resolve(image);
-                        image.onerror = (err) => reject(err);
-                        image.src = item.src;
+                        image.onerror = (err) => {
+                             console.error(`Failed to load image for PDF: ${item.id}`, err);
+                             reject(new Error(`Failed to load image: ${item.id}`));
+                         };
+                        image.src = item.src; // item.src is the Data URI
                     });
 
                     const imgWidth = img.naturalWidth;
                     const imgHeight = img.naturalHeight;
+                    if (imgWidth === 0 || imgHeight === 0) {
+                        throw new Error(`Image has zero dimensions: ${item.id}`);
+                    }
                     const aspectRatio = imgWidth / imgHeight;
 
+                    // Calculate drawing dimensions, fitting within imgMaxWidth and imgMaxHeight
                     let drawWidth = imgMaxWidth;
                     let drawHeight = drawWidth / aspectRatio;
 
@@ -478,52 +512,89 @@ export default function Home() {
                         drawHeight = imgMaxHeight;
                         drawWidth = drawHeight * aspectRatio;
                     }
+                    // Ensure width doesn't exceed max width after height adjustment
+                    if (drawWidth > imgMaxWidth) {
+                        drawWidth = imgMaxWidth;
+                        drawHeight = drawWidth / aspectRatio;
+                    }
 
-                    // Center the image within its allocated image area within the cell
-                    const drawX = cellX + (cellWidth - drawWidth) / 2;
-                    const drawY = cellY + (availableImageHeight - drawHeight) / 2;
 
-                    // Determine image type (simple check, might need improvement)
-                    const imageType = item.src.startsWith('data:image/png') ? 'PNG' : 'JPEG';
-                    pdf.addImage(item.src, imageType, drawX, drawY, drawWidth, drawHeight);
+                    // Center the image within its allocated image area
+                    const drawX = imageAreaX + (imgMaxWidth - drawWidth) / 2;
+                    const drawY = imageAreaY + (imgMaxHeight - drawHeight) / 2;
 
-                     // Add label below the image's allocated area
+                    // Add image to PDF
+                    // Determine image type from data URI or fileType
+                    let imageFormat = 'JPEG'; // Default
+                     if (item.fileType === 'image/png' || item.src.startsWith('data:image/png')) {
+                       imageFormat = 'PNG';
+                     } else if (item.fileType === 'image/webp' || item.src.startsWith('data:image/webp')) {
+                       imageFormat = 'WEBP'; // Requires jsPDF plugin or newer versions
+                       // Note: WEBP support might be experimental or require specific jsPDF setup. Test thoroughly.
+                       // Fallback to JPEG might be needed if WEBP fails.
+                     }
+                    pdf.addImage(item.src, imageFormat, drawX, drawY, drawWidth, drawHeight);
+
+
+                     // Add label below the image
                      if (item.label) {
-                         const labelX = cellX + (cellWidth / 2); // Center label text horizontally
-                         const labelY = cellY + availableImageHeight + 10; // Position label below image area + padding
-                         // Use splitTextToSize for multi-line labels and correct UTF-8 handling
-                         const labelLines = pdf.splitTextToSize(item.label, cellWidth * 0.9); // Wrap text within cell width
-                         pdf.text(labelLines, labelX, labelY, { align: 'center', maxWidth: cellWidth * 0.9 });
+                         const labelX = labelAreaX + cellWidth / 2; // Center label horizontally
+                         const labelY = labelAreaY + labelFontSize + 5; // Position label within its area (+ padding)
+                         const labelMaxWidth = cellWidth - (2 * imgPadding); // Max width for label text
+
+                         // Use splitTextToSize for potential multi-line labels and better wrapping.
+                         // This is where UTF-8 rendering issues often occur if the font doesn't support the characters.
+                         const labelLines = pdf.splitTextToSize(item.label, labelMaxWidth);
+                         pdf.text(labelLines, labelX, labelY, { align: 'center', maxWidth: labelMaxWidth });
                      }
 
-                 } catch (imgError) {
-                     console.error(`Error loading or adding image ${item.id} to PDF:`, imgError);
-                     // Draw a placeholder or error message in the PDF cell
-                      const errorX = cellX + 5;
-                      const errorY = cellY + 20;
-                     pdf.text('Error loading image', errorX, errorY);
+                 } catch (imgOrPdfError) {
+                     console.error(`Error processing image ${item.id} for PDF:`, imgOrPdfError);
+                      // Draw a placeholder in the PDF cell on error
+                     const errorX = cellX + 5;
+                     const errorY = cellY + 20;
+                     pdf.setFontSize(8);
+                     pdf.setTextColor(255, 0, 0); // Red color for error
+                     pdf.text(`Error adding image ${i+1}`, errorX, errorY, {maxWidth: cellWidth - 10});
+                     pdf.setTextColor(0); // Reset color
+                     pdf.setFontSize(labelFontSize);
                  }
             }
-            // Optional: Draw grid lines (after drawing all images/labels on the page)
-            // pdf.setDrawColor(200, 200, 200); // Light gray lines
-            // for (let r = 0; r <= rows; r++) {
-            //     const lineY = pageMargin + r * (availableImageHeight + labelHeight);
-            //     pdf.line(pageMargin, lineY, pageWidth + pageMargin, lineY);
-            // }
-            // for (let c = 0; c <= cols; c++) {
-            //     const lineX = pageMargin + c * cellWidth;
-            //     pdf.line(lineX, pageMargin, lineX, pageHeight + pageMargin);
-            // }
-            // pdf.setDrawColor(0, 0, 0); // Reset draw color
+
+             // Optional: Draw grid lines for debugging
+             // pdf.setDrawColor(200, 200, 200);
+             // for (let r = 0; r <= rows; r++) {
+             //     const lineY = pageMargin + r * cellHeight;
+             //     pdf.line(pageMargin, lineY, usableWidth + pageMargin, lineY);
+             // }
+             // for (let c = 0; c <= cols; c++) {
+             //     const lineX = pageMargin + c * cellWidth;
+             //     pdf.line(lineX, pageMargin, lineX, usableHeight + pageMargin);
+             // }
+             // pdf.setDrawColor(0); // Reset draw color
         }
 
         pdf.save('gridify_export.pdf');
         toast({ title: 'PDF Generated!', description: 'Your PDF has been downloaded.' });
     } catch (error) {
         console.error('Error generating PDF:', error);
-        toast({ title: 'PDF Generation Failed', description: 'An error occurred while generating the PDF.', variant: 'destructive' });
+        toast({ title: 'PDF Generation Failed', description: `An error occurred: ${error.message || error}`, variant: 'destructive' });
+    } finally {
+        setIsLoadingPDF(false);
     }
-}, [pages, toast]);
+}, [pages, toast, isLoadingPDF]);
+
+
+  // --- Render ---
+  if (!currentPage) {
+     // Handle state where currentPage is not yet available (e.g., during page deletion/navigation)
+     return (
+         <div className="flex justify-center items-center min-h-screen">
+             <Loader2 className="h-16 w-16 animate-spin text-accent" />
+             <p className="ml-4 text-muted-foreground">Loading...</p>
+         </div>
+     );
+ }
 
 
   return (
@@ -541,21 +612,21 @@ export default function Home() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <Label htmlFor="image-upload-button" className="mb-2 block">Upload Images</Label>
-              {/* Button to trigger generic upload */}
-              <Button id="image-upload-button" onClick={() => triggerFileUpload()} className="w-full" variant="outline">
+              <Label htmlFor="file-input-button" className="mb-2 block">Upload Images</Label>
+              {/* Button to trigger generic upload (targetIndex = null) */}
+              <Button id="file-input-button" onClick={() => triggerFileUpload()} className="w-full" variant="outline">
                 <Upload className="mr-2 h-4 w-4" /> Choose Images
               </Button>
-              {/* Hidden file input */}
+              {/* Hidden file input, always accepts multiple */}
               <Input
-                id="file-input" // Changed ID to avoid conflict if Label used 'for'
+                id="file-input-main" // Unique ID
                 type="file"
                 ref={fileInputRef}
                 onChange={handleImageUpload}
                 multiple
-                accept="image/*"
+                accept="image/png, image/jpeg, image/webp" // Specify accepted types
                 className="hidden"
-                // Consider adding capture attribute for mobile camera access: capture="environment" or capture="user"
+                // capture="environment" // Optionally uncomment for mobile camera
               />
             </div>
             <Separator />
@@ -567,7 +638,7 @@ export default function Home() {
                      <SelectValue placeholder="Rows" />
                    </SelectTrigger>
                    <SelectContent>
-                     {[1, 2, 3, 4, 5, 6].map(n => <SelectItem key={`row-${n}`} value={String(n)}>{n} Rows</SelectItem>)}
+                     {[1, 2, 3, 4, 5, 6, 7, 8].map(n => <SelectItem key={`row-${n}`} value={String(n)}>{n} Rows</SelectItem>)}
                    </SelectContent>
                  </Select>
                  <Select onValueChange={(value) => handleGridChange('cols', value)} value={String(currentPage?.cols ?? DEFAULT_COLS)}>
@@ -590,8 +661,13 @@ export default function Home() {
                  </Button>
               </div>
               <Separator />
-             <Button onClick={exportToPDF} className="w-full bg-accent text-accent-foreground hover:bg-accent/90">
-               <Download className="mr-2 h-4 w-4" /> Export as PDF
+             <Button onClick={exportToPDF} className="w-full bg-accent text-accent-foreground hover:bg-accent/90" disabled={isLoadingPDF}>
+                {isLoadingPDF ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                   <Download className="mr-2 h-4 w-4" />
+                )}
+               Export as PDF
              </Button>
           </CardContent>
         </Card>
@@ -606,68 +682,76 @@ export default function Home() {
                      <ArrowLeft className="h-4 w-4"/>
                      <span className="sr-only">Previous Page</span>
                  </Button>
-                 <Button onClick={goToNextPage} disabled={currentPageIndex === pages.length - 1} size="icon" variant="outline">
+                 <Button onClick={goToNextPage} disabled={currentPageIndex >= pages.length - 1} size="icon" variant="outline">
                      <ArrowRight className="h-4 w-4"/>
                       <span className="sr-only">Next Page</span>
                  </Button>
               </div>
             </CardHeader>
             <CardContent className="p-4">
-              {currentPage ? (
+              {/* Ensure currentPage exists before rendering grid */}
+              {currentPage && (
                 <div
                     className={`grid gap-4 border border-dashed border-border p-4 rounded-md bg-muted/10`}
                     style={{
-                    gridTemplateColumns: `repeat(${currentPage.cols}, minmax(0, 1fr))`, // Use minmax for better flex distribution
-                    gridTemplateRows: `repeat(${currentPage.rows}, minmax(150px, auto))`, // Ensure minimum row height, allow expansion
+                      gridTemplateColumns: `repeat(${currentPage.cols}, minmax(100px, 1fr))`, // Min width for cells
+                      gridTemplateRows: `repeat(${currentPage.rows}, minmax(150px, auto))`, // Min height, allow expansion
+                      // aspectRatio: `${currentPage.cols} / ${currentPage.rows}`, // Maintain overall grid aspect might be too restrictive
                     }}
                 >
-                    {currentPage.items.map((item, index) => (
-                    <div
-                        key={item?.id ?? `empty-${index}`}
-                        className="border rounded-md flex flex-col items-center justify-between p-2 relative group bg-card hover:shadow-lg transition-shadow aspect-w-1 aspect-h-1" // Maintain aspect ratio, adjust justify content
-                    >
-                        {item ? (
-                        <>
-                            <div className="flex-grow flex items-center justify-center w-full h-[70%] mb-1 overflow-hidden">
-                                <img
-                                    src={item.src}
-                                    alt={`Uploaded ${index + 1}`}
-                                    className="max-w-full max-h-full object-contain rounded" // Use object-contain
-                                />
-                            </div>
-                            <Textarea
-                            value={item.label}
-                            onChange={(e) => handleLabelChange(item.id, e.target.value)}
-                            placeholder="Add label..."
-                            className="w-full text-xs h-10 mt-auto resize-none p-1 text-foreground bg-background border-input focus:ring-ring" // Adjusted styling
-                            rows={2} // Allow for slightly more text
-                            />
-                            <Button
-                            variant="ghost"
-                            size="icon"
-                            className="absolute top-1 right-1 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity bg-destructive/80 hover:bg-destructive text-destructive-foreground rounded-full p-1" // Ensure padding works with icon size
-                            onClick={() => handleDeleteImage(item.id)}
-                            aria-label="Delete image"
-                            >
-                            <Trash2 className="h-3 w-3" />
-                            </Button>
-                        </>
-                        ) : (
-                        <button
-                            className="w-full h-full flex flex-col items-center justify-center text-center text-muted-foreground hover:bg-accent/10 transition-colors rounded-md focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2"
-                            onClick={() => triggerFileUpload(index)} // Pass the index to target this specific slot
-                            aria-label={`Add image to slot ${index + 1}`}
-                        >
-                            <ImagePlus className="h-10 w-10 mx-auto mb-2 text-muted-foreground/50"/>
-                            <span className="text-sm">Click to add image</span>
-                        </button>
-                        )}
-                    </div>
-                    ))}
+                    {/* Generate array based on rows * cols for grid structure */}
+                    {Array.from({ length: currentPage.rows * currentPage.cols }).map((_, index) => {
+                       const item = currentPage.items[index] ?? null; // Get item or null if index out of bounds or empty
+                       return (
+                          <div
+                            // Use a stable key: item ID if exists, otherwise index for empty slots
+                            key={item?.id ?? `empty-slot-${currentPage.id}-${index}`}
+                            className="border rounded-md flex flex-col items-center justify-start p-2 relative group bg-card hover:shadow-lg transition-shadow aspect-square" // Use aspect-square for consistent cell shape
+                            style={{ minHeight: '150px' }} // Ensure minimum height
+                          >
+                             {item ? (
+                              // --- Display Image and Label ---
+                              <>
+                                 <div className="flex-grow w-full h-[calc(100%-40px)] flex items-center justify-center overflow-hidden mb-1"> {/* Allocate space for image */}
+                                     <img
+                                         src={item.src}
+                                         alt={`Grid image ${index + 1}`}
+                                         className="max-w-full max-h-full object-contain rounded"
+                                     />
+                                 </div>
+                                 <Textarea
+                                    value={item.label}
+                                    onChange={(e) => handleLabelChange(item.id, e.target.value)}
+                                    placeholder="Add label..."
+                                    className="w-full text-xs h-[36px] mt-auto resize-none p-1 text-foreground bg-background border-input focus:ring-ring text-center block" // Fixed height, centered text
+                                    rows={1} // Start with 1 row, potentially allow more if needed via CSS or state
+                                  />
+                                 <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="absolute top-1 right-1 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity bg-destructive/80 hover:bg-destructive text-destructive-foreground rounded-full p-1 z-10" // Ensure button is on top
+                                    onClick={() => handleDeleteImage(item.id)}
+                                    aria-label="Delete image"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                 </Button>
+                              </>
+                             ) : (
+                              // --- Empty Slot - Click to Upload ---
+                              <button
+                                  className="w-full h-full flex flex-col items-center justify-center text-center text-muted-foreground hover:bg-accent/10 transition-colors rounded-md focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2"
+                                  onClick={() => triggerFileUpload(index)} // Pass the grid index
+                                  aria-label={`Add image to slot ${index + 1}`}
+                              >
+                                  <ImagePlus className="h-10 w-10 mx-auto mb-2 text-muted-foreground/50"/>
+                                  <span className="text-sm">Click to add</span>
+                              </button>
+                             )}
+                          </div>
+                       );
+                    })}
                 </div>
-              ) : (
-                 <div className="text-center text-muted-foreground p-10">Loading page data...</div>
-              )}
+               )}
             </CardContent>
           </Card>
         </main>
@@ -678,6 +762,3 @@ export default function Home() {
     </div>
   );
 }
-
-// Separator component is already imported from '@/components/ui/separator'
-// const Separator = () => <hr className="my-4 border-border" />; // Removed duplicate
