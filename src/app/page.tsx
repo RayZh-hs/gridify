@@ -11,13 +11,16 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/componen
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Upload, Grid, FileText, Download, PlusCircle, Trash2, ArrowLeft, ArrowRight, ImagePlus, Loader2 } from 'lucide-react';
 import jsPDF from 'jspdf';
-// Import a font that supports a wide range of UTF-8 characters.
-// Noto Sans is a good choice for broad UTF-8 support.
-// You need to download the font file (e.g., NotoSans-Regular.ttf)
-// and generate the VFS (Virtual File System) compatible JS file for jsPDF.
-// Tools like `fontconverter.js` can be used for this.
-// Example: import { NotoSans_Regular } from './path/to/NotoSans-Regular-normal.js';
-// For simplicity, we'll stick with Helvetica for now, accepting potential limitations.
+// --- Noto Sans Font Import for jsPDF ---
+// To support UTF-8 characters correctly in the PDF, you need to:
+// 1. Download the Noto Sans Regular font file (e.g., NotoSans-Regular.ttf).
+// 2. Convert it into a Base64 encoded JavaScript file compatible with jsPDF's VFS.
+//    Tools like fontconverter.js (available online) can do this.
+// 3. Place the generated JS file (e.g., `NotoSans-Regular-normal.js`) in your project (e.g., `src/lib/fonts/`).
+// 4. Uncomment the import line below and adjust the path if necessary.
+// If the import fails, the code will fall back to Helvetica, potentially causing rendering issues for non-Latin characters.
+// import { NotoSans_Regular } from '@/lib/fonts/NotoSans-Regular-normal.js';
+// --- End Noto Sans Font Import ---
 
 import { useToast } from '@/hooks/use-toast';
 import { Separator } from '@/components/ui/separator';
@@ -53,7 +56,6 @@ export default function Home() {
 
   // Function to trigger file input click
   const triggerFileUpload = (targetIndex: number | null = null) => {
-    console.log(`Triggering upload. Target index: ${targetIndex}`);
     directUploadIndexRef.current = targetIndex; // Store target index if provided
     // Reset input value to allow selecting the same file again
     if (fileInputRef.current) {
@@ -65,6 +67,14 @@ export default function Home() {
   // Reads a single file and returns a Promise with the ImageItem data or null on error
   const readFileAsDataURL = (file: File): Promise<Omit<ImageItem, 'id' | 'label'> | null> => {
       return new Promise((resolve) => {
+          // Basic validation for image types client-side
+          if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+              console.error("Unsupported file type:", file.name, file.type);
+              toast({ title: "Unsupported File Type", description: `Skipping file ${file.name}. Only JPEG, PNG, WEBP are supported.`, variant: "destructive" });
+              resolve(null);
+              return;
+          }
+
           const reader = new FileReader();
           reader.onload = (e) => {
               if (e.target?.result) {
@@ -88,10 +98,9 @@ export default function Home() {
   };
 
   // Handles the actual file selection event
-  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
       const files = event.target.files;
       if (!files || files.length === 0) {
-          console.log("No files selected.");
           directUploadIndexRef.current = null; // Reset ref
           return;
       }
@@ -99,133 +108,125 @@ export default function Home() {
       const targetIndex = directUploadIndexRef.current;
       directUploadIndexRef.current = null; // Reset ref immediately after use
 
-      console.log(`Files selected: ${files.length}, Target index: ${targetIndex}`);
-
       let filesToProcess: File[] = Array.from(files);
 
-      // --- Prepare state update ---
-      // Use a functional update to ensure we work with the latest state
-      setPages(currentPages => {
-          let newPages = JSON.parse(JSON.stringify(currentPages)); // Deep copy
-          let filesAddedCount = 0;
-          let slotsToFill: { pageIndex: number; itemIndex: number }[] = [];
-
-          // --- Determine target slots ---
-          if (targetIndex !== null) {
-              // Direct slot upload: Only use the first file and the specific slot
-              if (filesToProcess.length > 1) {
-                  toast({ title: "Notice", description: "Only the first selected image will be added to the specific slot.", variant: "default" });
-              }
-              filesToProcess = [filesToProcess[0]]; // Take only the first file
-
-              if (currentPageIndex < newPages.length && targetIndex < newPages[currentPageIndex].items.length) {
-                  if (newPages[currentPageIndex].items[targetIndex] === null) {
-                      slotsToFill.push({ pageIndex: currentPageIndex, itemIndex: targetIndex });
-                      console.log(`Targeting specific slot: Page ${currentPageIndex}, Index ${targetIndex}`);
-                  } else {
-                      toast({ title: "Upload Failed", description: "The selected slot is already filled.", variant: "destructive" });
-                      return currentPages; // Return original state if slot is filled
-                  }
-              } else {
-                  console.error(`Invalid target slot: Page ${currentPageIndex}, Index ${targetIndex}`);
-                  toast({ title: "Error", description: "Invalid target slot specified.", variant: "destructive" });
-                  return currentPages; // Return original state on error
-              }
-          } else {
-              // Generic upload: Find available slots across pages
-              let currentFileIdx = 0;
-              for (let p = 0; p < newPages.length && currentFileIdx < filesToProcess.length; p++) {
-                  for (let i = 0; i < newPages[p].items.length && currentFileIdx < filesToProcess.length; i++) {
-                      if (newPages[p].items[i] === null) {
-                          slotsToFill.push({ pageIndex: p, itemIndex: i });
-                          currentFileIdx++;
-                      }
-                  }
-              }
-
-              // If more files than slots, add new pages
-              while (currentFileIdx < filesToProcess.length) {
-                  const newPage: Page = {
-                      id: crypto.randomUUID(),
-                      items: Array(DEFAULT_ROWS * DEFAULT_COLS).fill(null),
-                      rows: DEFAULT_ROWS,
-                      cols: DEFAULT_COLS,
-                  };
-                  newPages.push(newPage);
-                  const newPageIndex = newPages.length - 1;
-                  console.log(`Adding new page ${newPageIndex} for excess files.`);
-                  for (let i = 0; i < newPage.items.length && currentFileIdx < filesToProcess.length; i++) {
-                     if (newPage.items[i] === null) { // Should always be null initially
-                          slotsToFill.push({ pageIndex: newPageIndex, itemIndex: i });
-                          currentFileIdx++;
-                      }
-                  }
-              }
-              console.log(`Found/Created ${slotsToFill.length} slots for ${filesToProcess.length} files.`);
-          }
-
-          // --- Process files and update pages ---
-          // Read all files concurrently
-          const readPromises = filesToProcess.slice(0, slotsToFill.length).map(file => readFileAsDataURL(file));
-
-          // Need an async IIFE to handle promises within the synchronous scope of setPages updater
-          (async () => {
-              const imageDatas = await Promise.all(readPromises);
-
-              let actuallyAddedCount = 0;
-              imageDatas.forEach((imageData, index) => {
-                  if (imageData && index < slotsToFill.length) {
-                      const { pageIndex, itemIndex } = slotsToFill[index];
-                      if (newPages[pageIndex] && newPages[pageIndex].items[itemIndex] === null) {
-                           const newItem: ImageItem = {
-                               id: crypto.randomUUID(),
-                               src: imageData.src,
-                               label: '',
-                               fileType: imageData.fileType,
-                           };
-                          newPages[pageIndex].items[itemIndex] = newItem;
-                          actuallyAddedCount++;
-                      } else {
-                           console.warn(`Slot [${pageIndex}, ${itemIndex}] was unexpectedly filled or invalid when trying to add image.`);
-                      }
-                  }
-              });
-
-              console.log(`Processed ${imageDatas.length} files. Added ${actuallyAddedCount} images.`);
-
-              if (actuallyAddedCount > 0) {
-                 toast({
-                     title: "Upload Successful",
-                     description: `${actuallyAddedCount} image(s) added.`,
-                 });
-              } else if (filesToProcess.length > 0) {
-                 // If files were selected but none could be added (e.g., all slots filled or read errors)
-                 toast({
-                     title: "Upload Failed",
-                     description: "No images could be added. Check available slots or file integrity.",
-                     variant: "destructive",
-                 });
-              }
-
-              // Update the state with the modified newPages array
-              // This needs to be done carefully if the async IIFE finishes *after* the main setPages returns.
-              // A better pattern might be needed if this causes issues, like managing loading state
-              // and updating pages *after* all promises resolve outside the initial setPages.
-              // For now, let's assume this works in most scenarios.
-              // **Correction:** We MUST call setPages again after the async operation completes.
-              // The initial setPages call only returns the *initial* state or a potentially partially modified one.
-              setPages(newPages); // This line is crucial to update state AFTER async operations
-
-          })(); // Immediately invoke the async function
-
-          // IMPORTANT: The immediate return value of the setPages updater might not reflect
-          // the final state if async operations are involved. We return the initially copied
-          // state here, and the final update happens when the async IIFE calls setPages again.
-          // This might cause a flicker, consider adding loading states.
-          return newPages; // Return the state *as it is* at the end of the synchronous part
-
-      }); // End of setPages functional update
+      // Process files asynchronously and then update state once
+      processFilesAndUpdateState(filesToProcess, targetIndex);
   };
+
+  // Separated async logic for processing files and updating state
+  const processFilesAndUpdateState = async (files: File[], targetSlotIndex: number | null) => {
+    let filesAddedCount = 0;
+    let pagesNeedUpdate = false;
+
+    // Read all valid files concurrently
+    const readPromises = files.map(file => readFileAsDataURL(file));
+    const imageDatas = (await Promise.all(readPromises)).filter(data => data !== null) as Omit<ImageItem, 'id' | 'label'>[];
+
+    if (imageDatas.length === 0 && files.length > 0) {
+         toast({ title: "Upload Failed", description: "No valid images could be processed.", variant: "destructive" });
+         return; // No valid images to add
+    }
+     if (imageDatas.length < files.length) {
+        toast({ title: "Partial Upload", description: `${files.length - imageDatas.length} file(s) were skipped due to errors or unsupported types.`, variant: "default" });
+     }
+
+
+    setPages(currentPages => {
+        let newPages = JSON.parse(JSON.stringify(currentPages)); // Deep copy for mutation
+        let currentImageIndex = 0;
+
+        if (targetSlotIndex !== null && imageDatas.length > 0) {
+            // Direct slot upload: Try to place the first valid image
+            if (targetSlotIndex < newPages[currentPageIndex]?.items.length) {
+                 if (newPages[currentPageIndex].items[targetSlotIndex] === null) {
+                     const imageData = imageDatas[0]; // Use the first successfully read image
+                     newPages[currentPageIndex].items[targetSlotIndex] = {
+                         id: crypto.randomUUID(),
+                         src: imageData.src,
+                         label: '',
+                         fileType: imageData.fileType,
+                     };
+                     filesAddedCount++;
+                     pagesNeedUpdate = true;
+                      if (imageDatas.length > 1) {
+                         toast({ title: "Notice", description: "Only the first valid image was added to the specific slot.", variant: "default" });
+                     }
+                     // Set remaining images to be handled by generic logic if any
+                     currentImageIndex = 1; // Start generic filling from the second image
+                 } else {
+                     toast({ title: "Slot Filled", description: "The selected slot is already occupied.", variant: "destructive" });
+                     // Keep remaining images for generic filling attempt
+                 }
+            } else {
+                 toast({ title: "Error", description: "Invalid target slot specified.", variant: "destructive" });
+                 // Keep remaining images for generic filling attempt
+            }
+             // If direct upload failed or used only the first image, remaining images fall through to generic upload below.
+        }
+
+        // Generic upload: Fill available slots, starting from currentImageIndex
+        for (let p = 0; p < newPages.length && currentImageIndex < imageDatas.length; p++) {
+            for (let i = 0; i < newPages[p].items.length && currentImageIndex < imageDatas.length; i++) {
+                if (newPages[p].items[i] === null) {
+                    const imageData = imageDatas[currentImageIndex];
+                    newPages[p].items[i] = {
+                        id: crypto.randomUUID(),
+                        src: imageData.src,
+                        label: '',
+                        fileType: imageData.fileType,
+                    };
+                    filesAddedCount++;
+                    pagesNeedUpdate = true;
+                    currentImageIndex++;
+                }
+            }
+        }
+
+        // Add new pages if necessary for remaining images
+        while (currentImageIndex < imageDatas.length) {
+            const newPage: Page = {
+                id: crypto.randomUUID(),
+                items: Array(DEFAULT_ROWS * DEFAULT_COLS).fill(null),
+                rows: DEFAULT_ROWS,
+                cols: DEFAULT_COLS,
+            };
+            newPages.push(newPage);
+            pagesNeedUpdate = true;
+            const newPageIndex = newPages.length - 1;
+
+            for (let i = 0; i < newPage.items.length && currentImageIndex < imageDatas.length; i++) {
+                const imageData = imageDatas[currentImageIndex];
+                newPage.items[i] = { // Directly modify the newPage items array
+                    id: crypto.randomUUID(),
+                    src: imageData.src,
+                    label: '',
+                    fileType: imageData.fileType,
+                };
+                filesAddedCount++;
+                currentImageIndex++;
+            }
+        }
+
+        // Only return new state if changes were made
+        if (pagesNeedUpdate) {
+            if (filesAddedCount > 0) {
+                toast({ title: "Upload Successful", description: `${filesAddedCount} image(s) added.` });
+            }
+            return newPages; // Return the modified state
+        } else {
+            // If no files were added (e.g., only tried direct upload to filled slot and had no other files)
+            if (files.length > 0 && targetSlotIndex !== null && filesAddedCount === 0) {
+                 // Already handled by "Slot Filled" toast
+            } else if (files.length > 0 && filesAddedCount === 0) {
+                // Generic upload attempt but no slots found and no new pages needed (shouldn't happen with current logic)
+                 toast({ title: "Upload Info", description: "No empty slots found for the uploaded images.", variant: "default" });
+            }
+            return currentPages; // No changes, return original state
+        }
+    });
+};
+
 
 
   const handleLabelChange = (imageId: string, newLabel: string) => {
@@ -259,16 +260,10 @@ export default function Home() {
           newItems[i] = currentItems[i];
         }
 
-        // Check if current page index needs adjustment (e.g., if resizing reduces total pages implicitly - though not the case here)
-        // This is more relevant if the action could delete pages.
-        // setCurrentPageIndex(prevIdx => Math.min(prevIdx, newPages.length - 1)); // Example adjustment if needed
-
         return { ...page, rows: newRows, cols: newCols, items: newItems };
       }
       return page;
     }));
-    // Update current page index if it becomes invalid (e.g., > new number of pages - though not applicable here)
-    // setCurrentPageIndex(prevIndex => Math.min(prevIndex, pages.length - 1));
   };
 
 
@@ -287,7 +282,6 @@ export default function Home() {
      toast({
       title: "Image Removed",
       description: "The image has been removed from the grid.",
-      // Using default variant for removal confirmation
      });
   };
 
@@ -300,8 +294,6 @@ export default function Home() {
      };
     setPages(prevPages => {
          const updatedPages = [...prevPages, newPage];
-         // No need to set current page index here, let useEffect handle it if needed,
-         // or handle it in the caller if specific navigation is required.
          return updatedPages;
      });
      setCurrentPageIndex(pages.length); // Navigate to the newly added page index (which is the old length)
@@ -326,7 +318,6 @@ export default function Home() {
      setPages(prevPages => prevPages.filter((_, index) => index !== pageIndexToDelete));
 
      // Adjust current page index *after* state update potential
-     // Use useEffect to handle index adjustments safely after render
      setCurrentPageIndex(prevIndex => {
        if (prevIndex === pageIndexToDelete) {
          // If deleting the current page, move to the previous one, or 0 if it was the first
@@ -343,7 +334,7 @@ export default function Home() {
      toast({
       title: "Page Deleted",
       description: `Page ${deletedPageNum} has been deleted.`,
-      variant: "destructive", // Destructive action notification
+      variant: "destructive",
      });
   };
 
@@ -356,23 +347,17 @@ export default function Home() {
      setCurrentPageIndex(prevIndex => Math.max(0, prevIndex - 1));
   };
 
- // Effect to adjust currentPageIndex if it becomes invalid after page deletion
+ // Effect to adjust currentPageIndex if it becomes invalid after page deletion or initialization
  useEffect(() => {
-    if (currentPageIndex >= pages.length && pages.length > 0) {
+    if (pages.length === 0) {
+      // Ensure there's always at least one page
+      setPages([{ id: crypto.randomUUID(), items: Array(DEFAULT_ROWS * DEFAULT_COLS).fill(null), rows: DEFAULT_ROWS, cols: DEFAULT_COLS }]);
+      setCurrentPageIndex(0);
+    } else if (currentPageIndex >= pages.length) {
+      // If index is out of bounds after deletion, go to the last valid page
       setCurrentPageIndex(pages.length - 1);
-    } else if (pages.length === 0) {
-        // Handle case where all pages are deleted - maybe add a default one back?
-        // For now, just set index to 0, though there's no page.
-        // A better approach would be to ensure at least one page always exists.
-        // Or display an "empty state" UI.
-        setCurrentPageIndex(0);
-        // If pages array is empty, consider adding a default page back
-        if (pages.length === 0) {
-             setPages([{ id: crypto.randomUUID(), items: Array(DEFAULT_ROWS * DEFAULT_COLS).fill(null), rows: DEFAULT_ROWS, cols: DEFAULT_COLS }]);
-             setCurrentPageIndex(0);
-        }
     }
- }, [pages, currentPageIndex]);
+  }, [pages, currentPageIndex]);
 
 
  const exportToPDF = useCallback(async () => {
@@ -381,41 +366,45 @@ export default function Home() {
     toast({ title: 'Generating PDF...', description: 'Please wait.' });
 
     const pdf = new jsPDF({
-        orientation: 'p',
-        unit: 'pt',
-        format: 'a4'
+        orientation: 'p', // Portrait
+        unit: 'pt',     // Points
+        format: 'a4'     // A4 page size
     });
 
-    // --- Font Handling ---
-    // jsPDF has limited built-in UTF-8 support. Helvetica/Arial might work for *some* chars.
-    // For full support, embedding a font like NotoSans is the robust solution.
-    // This requires generating a VFS file for the font.
-    // Example (if NotoSans VFS file is generated and imported as NotoSans_Regular):
-    /*
+    // --- Font Handling for UTF-8 ---
+    let fontLoaded = false;
     try {
-      // pdf.addFileToVFS('NotoSans-Regular-normal.ttf', NotoSans_Regular); // Font file Base64 encoded in the JS
-      // pdf.addFont('NotoSans-Regular-normal.ttf', 'NotoSans', 'normal');
-      // pdf.setFont('NotoSans', 'normal');
-       pdf.setFont('Helvetica', 'normal'); // Fallback
-       console.log("Using Helvetica font for PDF.");
+        // Check if the imported font variable exists (if uncommented and successful)
+        // @ts-ignore - Check if NotoSans_Regular is defined (if imported)
+        if (typeof NotoSans_Regular !== 'undefined') {
+          // pdf.addFileToVFS('NotoSans-Regular-normal.ttf', NotoSans_Regular); // Add font file from imported Base64 string
+          // pdf.addFont('NotoSans-Regular-normal.ttf', 'NotoSans', 'normal');
+          // pdf.setFont('NotoSans', 'normal');
+          // console.log("Using NotoSans font for PDF.");
+          // fontLoaded = true;
+
+          // TEMPORARY: Until font embedding is confirmed working, stick to Helvetica
+           pdf.setFont('Helvetica', 'normal');
+           console.warn("NotoSans font import detected but temporarily using Helvetica. Uncomment VFS lines to enable.");
+
+        } else {
+          console.log("NotoSans font not available, using Helvetica (limited UTF-8).");
+          pdf.setFont('Helvetica', 'normal');
+        }
     } catch (fontError) {
-        console.error("Error setting PDF font, using default:", fontError);
-        toast({ title: 'Font Warning', description: 'Could not load custom font, some characters might not render correctly.', variant: 'destructive' });
-         pdf.setFont(undefined, 'normal'); // Use jsPDF default
+        console.error("Error loading/setting PDF font:", fontError);
+        toast({ title: 'Font Warning', description: 'Could not set custom font, using default (limited UTF-8).', variant: 'destructive' });
+        pdf.setFont('Helvetica', 'normal'); // Fallback explicitly
     }
-    */
-     // Using Helvetica as default, acknowledging limitations
-     pdf.setFont('Helvetica', 'normal');
-     const labelFontSize = 10;
-     pdf.setFontSize(labelFontSize);
+    const labelFontSize = 10;
+    pdf.setFontSize(labelFontSize);
     // --- End Font Handling ---
 
 
     const pageMargin = 40;
     const usableWidth = pdf.internal.pageSize.getWidth() - 2 * pageMargin;
     const usableHeight = pdf.internal.pageSize.getHeight() - 2 * pageMargin;
-    const labelAreaHeight = 30; // Allocate space for labels (potentially multi-line)
-
+    const labelAreaHeight = 30; // Keep space for labels, adjust calculation below
 
     try {
         for (let p = 0; p < pages.length; p++) {
@@ -426,44 +415,45 @@ export default function Home() {
             if (p > 0) pdf.addPage();
 
             // Add Page Number Header
-             pdf.setFontSize(9);
-             pdf.setTextColor(150); // Light gray
-             pdf.text(`Page ${p + 1} of ${pages.length}`, pdf.internal.pageSize.getWidth() - pageMargin, pageMargin / 2, { align: 'right' });
-             pdf.setTextColor(0); // Reset text color
-             pdf.setFontSize(labelFontSize); // Reset font size for content
+            pdf.setFontSize(9);
+            pdf.setTextColor(150); // Light gray
+            pdf.text(`Page ${p + 1} of ${pages.length}`, pdf.internal.pageSize.getWidth() - pageMargin, pageMargin / 2, { align: 'right' });
+            pdf.setTextColor(0); // Reset text color
+            pdf.setFontSize(labelFontSize); // Reset font size for content
 
-
-             if (totalItemsOnPage === 0 && pages.length > 1) { // Only show empty message if not the only page
-                pdf.setFontSize(12);
-                pdf.text(`Page ${p + 1} is empty`, pageMargin, pageMargin + 20);
-                pdf.setFontSize(labelFontSize);
-                continue;
-            } else if (totalItemsOnPage === 0 && pages.length === 1) {
+            if (totalItemsOnPage === 0) {
                  pdf.setFontSize(12);
-                 pdf.text(`Add images to start`, pageMargin, pageMargin + 20);
+                 pdf.text(`Page ${p + 1} is empty`, pageMargin, pageMargin + 20);
                  pdf.setFontSize(labelFontSize);
                  continue;
-             }
+            }
 
             // --- Grid Calculation ---
             const cellWidth = usableWidth / cols;
-            const cellHeight = usableHeight / rows;
-            const imageAreaHeight = cellHeight - labelAreaHeight;
+            // Calculate total height needed per cell (image + label + padding)
+            // This is an estimate; actual image height varies.
+            // Let's make cell height dependent on rows, but image fitting handles the vertical space.
+             const cellHeight = usableHeight / rows;
+             // Height available *within* the cell *before* considering label
+             const availableCellHeight = cellHeight - 5; // Small bottom padding for cell
 
-            if (imageAreaHeight <= 0) {
-                console.error(`Calculated negative/zero image height on page ${p+1}. Rows: ${rows}, Usable Height: ${usableHeight}, Label Height: ${labelAreaHeight}`);
-                 toast({ title: 'Layout Error', description: `Cannot render page ${p+1} due to layout issue (image height <= 0). Try fewer rows.`, variant: 'destructive' });
+            if (cellWidth <= 10 || availableCellHeight <= labelAreaHeight + 10) { // Ensure minimal space
+                console.error(`Layout issue on page ${p+1}: Cell dimensions too small. W:${cellWidth}, H:${availableCellHeight}`);
+                toast({ title: 'Layout Error', description: `Cannot render page ${p+1}. Try fewer rows/columns.`, variant: 'destructive' });
                 continue; // Skip this page
             }
-            if (cellWidth <= 0) {
-                 console.error(`Calculated negative/zero cell width on page ${p+1}. Cols: ${cols}, Usable Width: ${usableWidth}`);
-                 toast({ title: 'Layout Error', description: `Cannot render page ${p+1} due to layout issue (cell width <= 0). Try fewer columns.`, variant: 'destructive' });
-                 continue; // Skip this page
-             }
 
             const imgPadding = 5; // Padding around image within its area
             const imgMaxWidth = cellWidth - (2 * imgPadding);
-            const imgMaxHeight = imageAreaHeight - (2 * imgPadding);
+            // Max height for the image *itself*, considering space needed for the label below it
+            const imgMaxHeight = availableCellHeight - labelAreaHeight - imgPadding; // Subtract label space and top padding
+
+
+            if (imgMaxHeight <= 0) {
+                 console.error(`Calculated negative/zero image max height on page ${p+1}. Rows: ${rows}, CellH: ${cellHeight}, LabelH: ${labelAreaHeight}`);
+                 toast({ title: 'Layout Error', description: `Cannot render page ${p+1} (img height <= 0). Try fewer rows.`, variant: 'destructive' });
+                 continue; // Skip this page
+             }
             // --- End Grid Calculation ---
 
 
@@ -477,31 +467,19 @@ export default function Home() {
                 // Cell top-left corner
                 const cellX = pageMargin + colIndex * cellWidth;
                 const cellY = pageMargin + rowIndex * cellHeight;
-                // Image area top-left corner (within cell)
-                const imageAreaX = cellX + imgPadding;
-                const imageAreaY = cellY + imgPadding;
-                // Label area top-left corner (within cell)
-                const labelAreaX = cellX;
-                const labelAreaY = cellY + imageAreaHeight;
-
 
                  try {
-                     // Get image dimensions using an Image object
                     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
                         const image = new Image();
                         image.onload = () => resolve(image);
-                        image.onerror = (err) => {
-                             console.error(`Failed to load image for PDF: ${item.id}`, err);
-                             reject(new Error(`Failed to load image: ${item.id}`));
-                         };
-                        image.src = item.src; // item.src is the Data URI
+                        image.onerror = (err) => reject(new Error(`Failed to load image: ${item.id}`));
+                        image.src = item.src;
                     });
 
                     const imgWidth = img.naturalWidth;
                     const imgHeight = img.naturalHeight;
-                    if (imgWidth === 0 || imgHeight === 0) {
-                        throw new Error(`Image has zero dimensions: ${item.id}`);
-                    }
+                    if (imgWidth === 0 || imgHeight === 0) throw new Error(`Image has zero dimensions: ${item.id}`);
+
                     const aspectRatio = imgWidth / imgHeight;
 
                     // Calculate drawing dimensions, fitting within imgMaxWidth and imgMaxHeight
@@ -512,66 +490,54 @@ export default function Home() {
                         drawHeight = imgMaxHeight;
                         drawWidth = drawHeight * aspectRatio;
                     }
-                    // Ensure width doesn't exceed max width after height adjustment
-                    if (drawWidth > imgMaxWidth) {
+                    if (drawWidth > imgMaxWidth) { // Recalculate if width constraint hit after height adjustment
                         drawWidth = imgMaxWidth;
                         drawHeight = drawWidth / aspectRatio;
                     }
 
-
-                    // Center the image within its allocated image area
-                    const drawX = imageAreaX + (imgMaxWidth - drawWidth) / 2;
-                    const drawY = imageAreaY + (imgMaxHeight - drawHeight) / 2;
+                    // Center the image horizontally within the cell's width
+                    const drawX = cellX + (cellWidth - drawWidth) / 2;
+                    // Position the image at the top of the cell (considering padding)
+                    const drawY = cellY + imgPadding;
 
                     // Add image to PDF
-                    // Determine image type from data URI or fileType
                     let imageFormat = 'JPEG'; // Default
-                     if (item.fileType === 'image/png' || item.src.startsWith('data:image/png')) {
-                       imageFormat = 'PNG';
-                     } else if (item.fileType === 'image/webp' || item.src.startsWith('data:image/webp')) {
-                       imageFormat = 'WEBP'; // Requires jsPDF plugin or newer versions
-                       // Note: WEBP support might be experimental or require specific jsPDF setup. Test thoroughly.
-                       // Fallback to JPEG might be needed if WEBP fails.
-                     }
+                    if (item.fileType.includes('png')) imageFormat = 'PNG';
+                    else if (item.fileType.includes('webp')) imageFormat = 'WEBP'; // Requires newer jsPDF or plugin
+
                     pdf.addImage(item.src, imageFormat, drawX, drawY, drawWidth, drawHeight);
 
+                    // --- Add label below the image ---
+                    if (item.label) {
+                        const labelX = cellX + cellWidth / 2; // Center label horizontally in cell
+                        // Position label *directly below* the drawn image + small gap
+                        const labelY = drawY + drawHeight + 5 + labelFontSize; // Image bottom + gap + font size approx baseline start
+                        const labelMaxWidth = cellWidth - (2 * imgPadding);
 
-                     // Add label below the image
-                     if (item.label) {
-                         const labelX = labelAreaX + cellWidth / 2; // Center label horizontally
-                         const labelY = labelAreaY + labelFontSize + 5; // Position label within its area (+ padding)
-                         const labelMaxWidth = cellWidth - (2 * imgPadding); // Max width for label text
+                        // Use splitTextToSize for wrapping
+                        const labelLines = pdf.splitTextToSize(item.label, labelMaxWidth);
 
-                         // Use splitTextToSize for potential multi-line labels and better wrapping.
-                         // This is where UTF-8 rendering issues often occur if the font doesn't support the characters.
-                         const labelLines = pdf.splitTextToSize(item.label, labelMaxWidth);
-                         pdf.text(labelLines, labelX, labelY, { align: 'center', maxWidth: labelMaxWidth });
-                     }
+                        // Check if label exceeds allocated label area (crude check)
+                        const requiredLabelHeight = labelLines.length * labelFontSize * 1.2; // Estimate line height
+                        if (labelY + requiredLabelHeight > cellY + cellHeight) {
+                             console.warn(`Label for item ${i+1} might overflow cell bounds.`);
+                             // Optionally truncate or indicate overflow
+                        }
+
+                        pdf.text(labelLines, labelX, labelY, { align: 'center', maxWidth: labelMaxWidth, baseline: 'top' }); // Align baseline to top
+                    }
 
                  } catch (imgOrPdfError) {
                      console.error(`Error processing image ${item.id} for PDF:`, imgOrPdfError);
-                      // Draw a placeholder in the PDF cell on error
                      const errorX = cellX + 5;
                      const errorY = cellY + 20;
                      pdf.setFontSize(8);
-                     pdf.setTextColor(255, 0, 0); // Red color for error
-                     pdf.text(`Error adding image ${i+1}`, errorX, errorY, {maxWidth: cellWidth - 10});
+                     pdf.setTextColor(255, 0, 0); // Red
+                     pdf.text(`Error image ${i+1}`, errorX, errorY, {maxWidth: cellWidth - 10});
                      pdf.setTextColor(0); // Reset color
-                     pdf.setFontSize(labelFontSize);
+                     pdf.setFontSize(labelFontSize); // Reset font size
                  }
             }
-
-             // Optional: Draw grid lines for debugging
-             // pdf.setDrawColor(200, 200, 200);
-             // for (let r = 0; r <= rows; r++) {
-             //     const lineY = pageMargin + r * cellHeight;
-             //     pdf.line(pageMargin, lineY, usableWidth + pageMargin, lineY);
-             // }
-             // for (let c = 0; c <= cols; c++) {
-             //     const lineX = pageMargin + c * cellWidth;
-             //     pdf.line(lineX, pageMargin, lineX, usableHeight + pageMargin);
-             // }
-             // pdf.setDrawColor(0); // Reset draw color
         }
 
         pdf.save('gridify_export.pdf');
@@ -582,16 +548,15 @@ export default function Home() {
     } finally {
         setIsLoadingPDF(false);
     }
-}, [pages, toast, isLoadingPDF]);
+}, [pages, currentPageIndex, toast, isLoadingPDF]); // Added currentPageIndex dependency
 
 
   // --- Render ---
   if (!currentPage) {
-     // Handle state where currentPage is not yet available (e.g., during page deletion/navigation)
      return (
          <div className="flex justify-center items-center min-h-screen">
              <Loader2 className="h-16 w-16 animate-spin text-accent" />
-             <p className="ml-4 text-muted-foreground">Loading...</p>
+             <p className="ml-4 text-muted-foreground">Loading page...</p>
          </div>
      );
  }
@@ -613,20 +578,17 @@ export default function Home() {
           <CardContent className="space-y-4">
             <div>
               <Label htmlFor="file-input-button" className="mb-2 block">Upload Images</Label>
-              {/* Button to trigger generic upload (targetIndex = null) */}
               <Button id="file-input-button" onClick={() => triggerFileUpload()} className="w-full" variant="outline">
                 <Upload className="mr-2 h-4 w-4" /> Choose Images
               </Button>
-              {/* Hidden file input, always accepts multiple */}
               <Input
-                id="file-input-main" // Unique ID
+                id="file-input-main"
                 type="file"
                 ref={fileInputRef}
                 onChange={handleImageUpload}
                 multiple
-                accept="image/png, image/jpeg, image/webp" // Specify accepted types
+                accept="image/png, image/jpeg, image/webp"
                 className="hidden"
-                // capture="environment" // Optionally uncomment for mobile camera
               />
             </div>
             <Separator />
@@ -661,7 +623,7 @@ export default function Home() {
                  </Button>
               </div>
               <Separator />
-             <Button onClick={exportToPDF} className="w-full bg-accent text-accent-foreground hover:bg-accent/90" disabled={isLoadingPDF}>
+             <Button onClick={exportToPDF} className="w-full bg-accent text-accent-foreground hover:bg-accent/90" disabled={isLoadingPDF || pages.length === 0 || pages[currentPageIndex]?.items.every(item => item === null) }>
                 {isLoadingPDF ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
@@ -689,47 +651,48 @@ export default function Home() {
               </div>
             </CardHeader>
             <CardContent className="p-4">
-              {/* Ensure currentPage exists before rendering grid */}
               {currentPage && (
                 <div
                     className={`grid gap-4 border border-dashed border-border p-4 rounded-md bg-muted/10`}
                     style={{
-                      gridTemplateColumns: `repeat(${currentPage.cols}, minmax(100px, 1fr))`, // Min width for cells
-                      gridTemplateRows: `repeat(${currentPage.rows}, minmax(150px, auto))`, // Min height, allow expansion
-                      // aspectRatio: `${currentPage.cols} / ${currentPage.rows}`, // Maintain overall grid aspect might be too restrictive
+                      gridTemplateColumns: `repeat(${currentPage.cols}, minmax(100px, 1fr))`,
+                      gridAutoRows: `minmax(150px, auto)`, // Ensure rows have a min height but can grow
                     }}
                 >
-                    {/* Generate array based on rows * cols for grid structure */}
                     {Array.from({ length: currentPage.rows * currentPage.cols }).map((_, index) => {
-                       const item = currentPage.items[index] ?? null; // Get item or null if index out of bounds or empty
+                       const item = currentPage.items[index] ?? null;
                        return (
                           <div
-                            // Use a stable key: item ID if exists, otherwise index for empty slots
                             key={item?.id ?? `empty-slot-${currentPage.id}-${index}`}
-                            className="border rounded-md flex flex-col items-center justify-start p-2 relative group bg-card hover:shadow-lg transition-shadow aspect-square" // Use aspect-square for consistent cell shape
-                            style={{ minHeight: '150px' }} // Ensure minimum height
+                            className="border rounded-md flex flex-col items-center p-2 relative group bg-card hover:shadow-lg transition-shadow overflow-hidden" // Removed aspect-square, added overflow-hidden
+                            style={{ minHeight: '150px' }} // Keep min height
                           >
                              {item ? (
                               // --- Display Image and Label ---
                               <>
-                                 <div className="flex-grow w-full h-[calc(100%-40px)] flex items-center justify-center overflow-hidden mb-1"> {/* Allocate space for image */}
+                                 {/* Image container - allows image to take available space, pushing label down */}
+                                 <div className="w-full flex-shrink-0 flex items-center justify-center overflow-hidden mb-1 flex-grow">
                                      <img
                                          src={item.src}
                                          alt={`Grid image ${index + 1}`}
                                          className="max-w-full max-h-full object-contain rounded"
+                                         // style={{ maxHeight: 'calc(100% - 40px)' }} // Limit image height to leave space for label (adjust 40px as needed)
                                      />
                                  </div>
-                                 <Textarea
-                                    value={item.label}
-                                    onChange={(e) => handleLabelChange(item.id, e.target.value)}
-                                    placeholder="Add label..."
-                                    className="w-full text-xs h-[36px] mt-auto resize-none p-1 text-foreground bg-background border-input focus:ring-ring text-center block" // Fixed height, centered text
-                                    rows={1} // Start with 1 row, potentially allow more if needed via CSS or state
-                                  />
+                                 {/* Label Container - occupies remaining space at the bottom */}
+                                  <div className="w-full mt-auto flex-shrink-0 h-[40px]"> {/* Fixed height container for textarea */}
+                                     <Textarea
+                                        value={item.label}
+                                        onChange={(e) => handleLabelChange(item.id, e.target.value)}
+                                        placeholder="Add label..."
+                                        className="w-full text-xs resize-none p-1 text-foreground bg-background border-input focus:ring-ring text-center block h-full" // Use h-full to fill container
+                                        rows={2} // Allow up to 2 rows, adjust as needed
+                                      />
+                                  </div>
                                  <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="absolute top-1 right-1 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity bg-destructive/80 hover:bg-destructive text-destructive-foreground rounded-full p-1 z-10" // Ensure button is on top
+                                    className="absolute top-1 right-1 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity bg-destructive/80 hover:bg-destructive text-destructive-foreground rounded-full p-1 z-10"
                                     onClick={() => handleDeleteImage(item.id)}
                                     aria-label="Delete image"
                                   >
@@ -740,7 +703,7 @@ export default function Home() {
                               // --- Empty Slot - Click to Upload ---
                               <button
                                   className="w-full h-full flex flex-col items-center justify-center text-center text-muted-foreground hover:bg-accent/10 transition-colors rounded-md focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2"
-                                  onClick={() => triggerFileUpload(index)} // Pass the grid index
+                                  onClick={() => triggerFileUpload(index)}
                                   aria-label={`Add image to slot ${index + 1}`}
                               >
                                   <ImagePlus className="h-10 w-10 mx-auto mb-2 text-muted-foreground/50"/>
@@ -752,6 +715,13 @@ export default function Home() {
                     })}
                 </div>
                )}
+                {/* Message shown if the current page is empty */}
+               {currentPage && currentPage.items.every(item => item === null) && (
+                   <div className="text-center text-muted-foreground mt-8">
+                       <p>This page is empty.</p>
+                       <p>Click "Choose Images" or click on an empty slot to add images.</p>
+                   </div>
+               )}
             </CardContent>
           </Card>
         </main>
@@ -762,3 +732,40 @@ export default function Home() {
     </div>
   );
 }
+```
+  </change>
+  <change>
+    <file>src/lib/fonts/NotoSans-Regular-normal.js</file>
+    <description>Add placeholder file for NotoSans font VFS data. User needs to generate the actual content using a tool like fontconverter.js and replace this placeholder.</description>
+    <content><![CDATA[// --- Placeholder for Noto Sans Regular Font VFS Data ---
+//
+// This file is a placeholder. To enable full UTF-8 character support in PDFs,
+// you need to generate the actual jsPDF Virtual File System (VFS) data for
+// the Noto Sans Regular font and replace the content of this file with it.
+//
+// Instructions:
+// 1. Download the Noto Sans Regular font file (e.g., NotoSans-Regular.ttf).
+//    You can find it on Google Fonts: https://fonts.google.com/noto/specimen/Noto+Sans
+// 2. Use an online or offline tool to convert the .ttf file into a Base64 encoded
+//    JavaScript file compatible with jsPDF's VFS. A common tool is `fontconverter.js`
+//    (you might find versions online or need to set one up locally).
+// 3. The output will be a JavaScript file containing something like:
+//    `export const NotoSans_Regular = 'AAEAAAARAQAABAAQRFNJR... (very long Base64 string)';`
+// 4. Replace the entire content of this placeholder file (`src/lib/fonts/NotoSans-Regular-normal.js`)
+//    with the content generated in step 3.
+// 5. Uncomment the import line in `src/app/page.tsx`:
+//    `import { NotoSans_Regular } from '@/lib/fonts/NotoSans-Regular-normal.js';`
+// 6. Uncomment the VFS registration lines within the `exportToPDF` function in `src/app/page.tsx`:
+//    `pdf.addFileToVFS('NotoSans-Regular-normal.ttf', NotoSans_Regular);`
+//    `pdf.addFont('NotoSans-Regular-normal.ttf', 'NotoSans', 'normal');`
+//    `pdf.setFont('NotoSans', 'normal');`
+// 7. You might need to comment out the fallback `pdf.setFont('Helvetica', 'normal');` lines after enabling NotoSans.
+//
+// After completing these steps, jsPDF should use Noto Sans for rendering text in the PDF,
+// providing much better support for various UTF-8 characters.
+//
+// --- End Placeholder ---
+
+// If you don't generate the font file, leave this export line here
+// so the import in page.tsx doesn't cause a hard error, although the font won't load.
+export const NotoSans_Regular = undefined;
