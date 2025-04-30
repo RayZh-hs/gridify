@@ -1,9 +1,0 @@
-<!--
-This is a placeholder comment.
-To add a real favicon:
-1. Create or download a `favicon.ico` file.
-2. Place it directly inside the `public` folder of your Next.js project.
-3. Ensure the link in `src/app/layout.tsx` points to `/favicon.ico`.
-
-Generating actual binary files like `.ico` is not supported here.
--->
