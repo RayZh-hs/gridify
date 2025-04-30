@@ -16,7 +16,7 @@ import jsPDF from 'jspdf';
 // 1. Download the Noto Sans Regular font file (e.g., NotoSans-Regular.ttf).
 // 2. Convert it into a Base64 encoded JavaScript file compatible with jsPDF's VFS.
 //    Tools like fontconverter.js (available online) can do this.
-// 3. Place the generated JS file (e.g., `NotoSans-Regular-normal.js`) in your project (e.g., `src/lib/fonts/`).
+// 3. Place the generated JS file (e.g., 'NotoSans-Regular-normal.js') in your project (e.g., 'src/lib/fonts/').
 // 4. Uncomment the import line below and adjust the path if necessary.
 // If the import fails, the code will fall back to Helvetica, potentially causing rendering issues for non-Latin characters.
 // import { NotoSans_Regular } from '@/lib/fonts/NotoSans-Regular-normal.js';
@@ -167,7 +167,9 @@ export default function Home() {
 
         // Generic upload: Fill available slots, starting from currentImageIndex
         for (let p = 0; p < newPages.length && currentImageIndex < imageDatas.length; p++) {
-            for (let i = 0; i < newPages[p].items.length && currentImageIndex < imageDatas.length; i++) {
+            // If current page is not the target, start from the beginning of that page
+            const startingItemIndex = (p === currentPageIndex && targetSlotIndex !== null && filesAddedCount > 0) ? 0 : 0; // Always start from 0 for generic fill now
+            for (let i = startingItemIndex; i < newPages[p].items.length && currentImageIndex < imageDatas.length; i++) {
                 if (newPages[p].items[i] === null) {
                     const imageData = imageDatas[currentImageIndex];
                     newPages[p].items[i] = {
@@ -197,7 +199,7 @@ export default function Home() {
 
             for (let i = 0; i < newPage.items.length && currentImageIndex < imageDatas.length; i++) {
                 const imageData = imageDatas[currentImageIndex];
-                newPage.items[i] = { // Directly modify the newPage items array
+                newPages[newPageIndex].items[i] = { // Directly modify the newPage items array on the *correct* page
                     id: crypto.randomUUID(),
                     src: imageData.src,
                     label: '',
@@ -216,11 +218,12 @@ export default function Home() {
             return newPages; // Return the modified state
         } else {
             // If no files were added (e.g., only tried direct upload to filled slot and had no other files)
-            if (files.length > 0 && targetSlotIndex !== null && filesAddedCount === 0) {
+            if (files.length > 0 && targetSlotIndex !== null && filesAddedCount === 0 && imageDatas.length > 0) {
                  // Already handled by "Slot Filled" toast
-            } else if (files.length > 0 && filesAddedCount === 0) {
-                // Generic upload attempt but no slots found and no new pages needed (shouldn't happen with current logic)
-                 toast({ title: "Upload Info", description: "No empty slots found for the uploaded images.", variant: "default" });
+            } else if (files.length > 0 && filesAddedCount === 0 && imageDatas.length === 0) {
+                 // Handled by "Upload Failed" or "Partial Upload" toast
+            } else if (files.length > 0 && filesAddedCount === 0 && imageDatas.length > 0) {
+                 toast({ title: "Upload Info", description: "No empty slots found for the remaining images.", variant: "default" });
             }
             return currentPages; // No changes, return original state
         }
@@ -374,26 +377,23 @@ export default function Home() {
     // --- Font Handling for UTF-8 ---
     let fontLoaded = false;
     try {
-        // Check if the imported font variable exists (if uncommented and successful)
+        // IMPORTANT: NotoSans font data must be generated and imported for this to work.
+        // See instructions in src/lib/fonts/NotoSans-Regular-normal.js
         // @ts-ignore - Check if NotoSans_Regular is defined (if imported)
-        if (typeof NotoSans_Regular !== 'undefined') {
-          // pdf.addFileToVFS('NotoSans-Regular-normal.ttf', NotoSans_Regular); // Add font file from imported Base64 string
-          // pdf.addFont('NotoSans-Regular-normal.ttf', 'NotoSans', 'normal');
-          // pdf.setFont('NotoSans', 'normal');
-          // console.log("Using NotoSans font for PDF.");
-          // fontLoaded = true;
-
-          // TEMPORARY: Until font embedding is confirmed working, stick to Helvetica
-           pdf.setFont('Helvetica', 'normal');
-           console.warn("NotoSans font import detected but temporarily using Helvetica. Uncomment VFS lines to enable.");
-
+        if (typeof NotoSans_Regular !== 'undefined' && NotoSans_Regular) {
+           pdf.addFileToVFS('NotoSans-Regular-normal.ttf', NotoSans_Regular); // Add font file from imported Base64 string
+           pdf.addFont('NotoSans-Regular-normal.ttf', 'NotoSans', 'normal');
+           pdf.setFont('NotoSans', 'normal');
+           console.log("Using NotoSans font for PDF.");
+           fontLoaded = true;
         } else {
-          console.log("NotoSans font not available, using Helvetica (limited UTF-8).");
+          console.log("NotoSans font not available or not imported correctly, using Helvetica (limited UTF-8).");
           pdf.setFont('Helvetica', 'normal');
+          toast({ title: 'Font Warning', description: 'Default font used. For full UTF-8 support, generate and include Noto Sans font data.', variant: 'default' });
         }
     } catch (fontError) {
         console.error("Error loading/setting PDF font:", fontError);
-        toast({ title: 'Font Warning', description: 'Could not set custom font, using default (limited UTF-8).', variant: 'destructive' });
+        toast({ title: 'Font Error', description: 'Could not set custom font, using default.', variant: 'destructive' });
         pdf.setFont('Helvetica', 'normal'); // Fallback explicitly
     }
     const labelFontSize = 10;
@@ -404,7 +404,7 @@ export default function Home() {
     const pageMargin = 40;
     const usableWidth = pdf.internal.pageSize.getWidth() - 2 * pageMargin;
     const usableHeight = pdf.internal.pageSize.getHeight() - 2 * pageMargin;
-    const labelAreaHeight = 30; // Keep space for labels, adjust calculation below
+    const labelAreaHeight = 30; // Estimated space for label, used for image height calculation
 
     try {
         for (let p = 0; p < pages.length; p++) {
@@ -414,12 +414,20 @@ export default function Home() {
 
             if (p > 0) pdf.addPage();
 
+             // Ensure correct font is set for each new page (might reset after addPage)
+            if (fontLoaded) {
+                pdf.setFont('NotoSans', 'normal');
+            } else {
+                pdf.setFont('Helvetica', 'normal');
+            }
+
             // Add Page Number Header
             pdf.setFontSize(9);
             pdf.setTextColor(150); // Light gray
             pdf.text(`Page ${p + 1} of ${pages.length}`, pdf.internal.pageSize.getWidth() - pageMargin, pageMargin / 2, { align: 'right' });
             pdf.setTextColor(0); // Reset text color
             pdf.setFontSize(labelFontSize); // Reset font size for content
+
 
             if (totalItemsOnPage === 0) {
                  pdf.setFontSize(12);
@@ -430,11 +438,7 @@ export default function Home() {
 
             // --- Grid Calculation ---
             const cellWidth = usableWidth / cols;
-            // Calculate total height needed per cell (image + label + padding)
-            // This is an estimate; actual image height varies.
-            // Let's make cell height dependent on rows, but image fitting handles the vertical space.
              const cellHeight = usableHeight / rows;
-             // Height available *within* the cell *before* considering label
              const availableCellHeight = cellHeight - 5; // Small bottom padding for cell
 
             if (cellWidth <= 10 || availableCellHeight <= labelAreaHeight + 10) { // Ensure minimal space
@@ -446,7 +450,7 @@ export default function Home() {
             const imgPadding = 5; // Padding around image within its area
             const imgMaxWidth = cellWidth - (2 * imgPadding);
             // Max height for the image *itself*, considering space needed for the label below it
-            const imgMaxHeight = availableCellHeight - labelAreaHeight - imgPadding; // Subtract label space and top padding
+            const imgMaxHeight = availableCellHeight - labelAreaHeight - imgPadding; // Subtract estimate label space + paddings
 
 
             if (imgMaxHeight <= 0) {
@@ -505,24 +509,25 @@ export default function Home() {
                     if (item.fileType.includes('png')) imageFormat = 'PNG';
                     else if (item.fileType.includes('webp')) imageFormat = 'WEBP'; // Requires newer jsPDF or plugin
 
+                    // Ensure font is set before adding text/image that might trigger font changes
+                    if (fontLoaded) pdf.setFont('NotoSans', 'normal'); else pdf.setFont('Helvetica', 'normal');
+                    pdf.setFontSize(labelFontSize);
+
                     pdf.addImage(item.src, imageFormat, drawX, drawY, drawWidth, drawHeight);
 
                     // --- Add label below the image ---
                     if (item.label) {
                         const labelX = cellX + cellWidth / 2; // Center label horizontally in cell
                         // Position label *directly below* the drawn image + small gap
-                        const labelY = drawY + drawHeight + 5 + labelFontSize; // Image bottom + gap + font size approx baseline start
+                        const labelY = drawY + drawHeight + 5; // Image bottom + gap -> baseline start
                         const labelMaxWidth = cellWidth - (2 * imgPadding);
 
                         // Use splitTextToSize for wrapping
                         const labelLines = pdf.splitTextToSize(item.label, labelMaxWidth);
 
-                        // Check if label exceeds allocated label area (crude check)
-                        const requiredLabelHeight = labelLines.length * labelFontSize * 1.2; // Estimate line height
-                        if (labelY + requiredLabelHeight > cellY + cellHeight) {
-                             console.warn(`Label for item ${i+1} might overflow cell bounds.`);
-                             // Optionally truncate or indicate overflow
-                        }
+                        // Ensure font is set correctly before drawing text
+                        if (fontLoaded) pdf.setFont('NotoSans', 'normal'); else pdf.setFont('Helvetica', 'normal');
+                        pdf.setFontSize(labelFontSize);
 
                         pdf.text(labelLines, labelX, labelY, { align: 'center', maxWidth: labelMaxWidth, baseline: 'top' }); // Align baseline to top
                     }
@@ -531,6 +536,8 @@ export default function Home() {
                      console.error(`Error processing image ${item.id} for PDF:`, imgOrPdfError);
                      const errorX = cellX + 5;
                      const errorY = cellY + 20;
+                      // Ensure font is set before drawing error text
+                      if (fontLoaded) pdf.setFont('NotoSans', 'normal'); else pdf.setFont('Helvetica', 'normal');
                      pdf.setFontSize(8);
                      pdf.setTextColor(255, 0, 0); // Red
                      pdf.text(`Error image ${i+1}`, errorX, errorY, {maxWidth: cellWidth - 10});
@@ -664,22 +671,21 @@ export default function Home() {
                        return (
                           <div
                             key={item?.id ?? `empty-slot-${currentPage.id}-${index}`}
-                            className="border rounded-md flex flex-col items-center p-2 relative group bg-card hover:shadow-lg transition-shadow overflow-hidden" // Removed aspect-square, added overflow-hidden
+                            className="border rounded-md flex flex-col items-center p-2 relative group bg-card hover:shadow-lg transition-shadow overflow-hidden justify-between" // Use justify-between
                             style={{ minHeight: '150px' }} // Keep min height
                           >
                              {item ? (
                               // --- Display Image and Label ---
                               <>
-                                 {/* Image container - allows image to take available space, pushing label down */}
-                                 <div className="w-full flex-shrink-0 flex items-center justify-center overflow-hidden mb-1 flex-grow">
+                                 {/* Image container - allow it to shrink/grow but keep aspect ratio */}
+                                 <div className="w-full flex-shrink-0 flex items-center justify-center overflow-hidden mb-1 flex-grow relative" style={{ minHeight: '50px' /* Ensure some minimum height for image area */}}>
                                      <img
                                          src={item.src}
                                          alt={`Grid image ${index + 1}`}
-                                         className="max-w-full max-h-full object-contain rounded"
-                                         // style={{ maxHeight: 'calc(100% - 40px)' }} // Limit image height to leave space for label (adjust 40px as needed)
+                                         className="max-w-full max-h-full object-contain rounded absolute top-0 left-0 right-0 bottom-0 m-auto" // Center using absolute positioning
                                      />
                                  </div>
-                                 {/* Label Container - occupies remaining space at the bottom */}
+                                 {/* Label Container - occupies fixed height at the bottom */}
                                   <div className="w-full mt-auto flex-shrink-0 h-[40px]"> {/* Fixed height container for textarea */}
                                      <Textarea
                                         value={item.label}
@@ -732,40 +738,3 @@ export default function Home() {
     </div>
   );
 }
-```
-  </change>
-  <change>
-    <file>src/lib/fonts/NotoSans-Regular-normal.js</file>
-    <description>Add placeholder file for NotoSans font VFS data. User needs to generate the actual content using a tool like fontconverter.js and replace this placeholder.</description>
-    <content><![CDATA[// --- Placeholder for Noto Sans Regular Font VFS Data ---
-//
-// This file is a placeholder. To enable full UTF-8 character support in PDFs,
-// you need to generate the actual jsPDF Virtual File System (VFS) data for
-// the Noto Sans Regular font and replace the content of this file with it.
-//
-// Instructions:
-// 1. Download the Noto Sans Regular font file (e.g., NotoSans-Regular.ttf).
-//    You can find it on Google Fonts: https://fonts.google.com/noto/specimen/Noto+Sans
-// 2. Use an online or offline tool to convert the .ttf file into a Base64 encoded
-//    JavaScript file compatible with jsPDF's VFS. A common tool is `fontconverter.js`
-//    (you might find versions online or need to set one up locally).
-// 3. The output will be a JavaScript file containing something like:
-//    `export const NotoSans_Regular = 'AAEAAAARAQAABAAQRFNJR... (very long Base64 string)';`
-// 4. Replace the entire content of this placeholder file (`src/lib/fonts/NotoSans-Regular-normal.js`)
-//    with the content generated in step 3.
-// 5. Uncomment the import line in `src/app/page.tsx`:
-//    `import { NotoSans_Regular } from '@/lib/fonts/NotoSans-Regular-normal.js';`
-// 6. Uncomment the VFS registration lines within the `exportToPDF` function in `src/app/page.tsx`:
-//    `pdf.addFileToVFS('NotoSans-Regular-normal.ttf', NotoSans_Regular);`
-//    `pdf.addFont('NotoSans-Regular-normal.ttf', 'NotoSans', 'normal');`
-//    `pdf.setFont('NotoSans', 'normal');`
-// 7. You might need to comment out the fallback `pdf.setFont('Helvetica', 'normal');` lines after enabling NotoSans.
-//
-// After completing these steps, jsPDF should use Noto Sans for rendering text in the PDF,
-// providing much better support for various UTF-8 characters.
-//
-// --- End Placeholder ---
-
-// If you don't generate the font file, leave this export line here
-// so the import in page.tsx doesn't cause a hard error, although the font won't load.
-export const NotoSans_Regular = undefined;
