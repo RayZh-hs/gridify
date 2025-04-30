@@ -19,7 +19,7 @@ import jsPDF from 'jspdf';
 // 3. Place the generated JS file (e.g., 'NotoSans-Regular-normal.js') in your project (e.g., 'src/lib/fonts/').
 // 4. Uncomment the import line below and adjust the path if necessary.
 // If the import fails, the code will fall back to Helvetica, potentially causing rendering issues for non-Latin characters.
-// import { NotoSans_Regular } from '@/lib/fonts/NotoSans-Regular-normal.js';
+import { NotoSans_Regular } from '@/lib/fonts/NotoSans-Regular-normal.js';
 // --- End Noto Sans Font Import ---
 
 import { useToast } from '@/hooks/use-toast';
@@ -39,8 +39,8 @@ interface Page {
   cols: number;
 }
 
-const DEFAULT_ROWS = 3;
-const DEFAULT_COLS = 4;
+const DEFAULT_ROWS = 1;
+const DEFAULT_COLS = 1;
 
 export default function Home() {
   const [pages, setPages] = useState<Page[]>([{ id: crypto.randomUUID(), items: Array(DEFAULT_ROWS * DEFAULT_COLS).fill(null), rows: DEFAULT_ROWS, cols: DEFAULT_COLS }]);
@@ -578,7 +578,7 @@ export default function Home() {
 
       <div className="flex flex-col md:flex-row gap-6 flex-grow">
         {/* Controls Panel */}
-        <Card className="w-full md:w-1/4 h-fit sticky top-4 shadow-md">
+        <Card className="w-full md:w-1/4 h-fit top-4 shadow-md">
           <CardHeader>
             <CardTitle>Controls</CardTitle>
           </CardHeader>
@@ -621,7 +621,7 @@ export default function Home() {
                </div>
              </div>
               <Separator />
-              <div className="flex gap-2">
+              <div className="flex flex-row md:flex-col gap-2">
                  <Button onClick={addPage} className="w-full" variant="outline">
                    <PlusCircle className="mr-2 h-4 w-4" /> Add Page
                  </Button>
