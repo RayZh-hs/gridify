@@ -5,6 +5,7 @@ import type React from 'react';
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Slider } from '@/components/ui/slider';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter, CardDescription } from '@/components/ui/card';
@@ -39,6 +40,7 @@ const DEFAULT_ROWS = 1;
 const DEFAULT_COLS = 1;
 const DEFAULT_ORIENTATION = 'p';
 const DEFAULT_PAGE_SIZE = 'a4'; // Default global page size
+const DEFAULT_PAGE_MARGIN = 40; // Default page margin
 
 // Define supported types for direct PDF inclusion and types needing conversion
 const PDF_DIRECT_SUPPORTED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
@@ -61,6 +63,7 @@ export default function Home() {
   const [pageOrientation, setPageOrientation] = useState<'p' | 'l'>(DEFAULT_ORIENTATION);
   // --- End State ---
   const [showPageNumbers, setShowPageNumbers] = useState(true); // Added state for page numbers
+  const [pageMargin, setPageMargin] = useState<number>(DEFAULT_PAGE_MARGIN); // Added state for page margin
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isLoadingPDF, setIsLoadingPDF] = useState(false);
@@ -442,7 +445,7 @@ export default function Home() {
     pdf.setFontSize(labelFontSize);
     // --- End Font Handling ---
 
-    const pageMargin = 40;
+    // const pageMargin = 40; // Use state variable instead
     // --- Calculate usable dimensions based on the PDF's initialized size/orientation ---
     const usableWidth = pdf.internal.pageSize.getWidth() - 2 * pageMargin;
     const usableHeight = pdf.internal.pageSize.getHeight() - 2 * pageMargin;
@@ -599,7 +602,7 @@ export default function Home() {
     } finally {
       setIsLoadingPDF(false);
     }
-  }, [pages, pageSize, pageOrientation, toast, isLoadingPDF, showPageNumbers]); // <-- Ensure showPageNumbers is in dependencies
+  }, [pages, pageSize, pageOrientation, toast, isLoadingPDF, showPageNumbers, pageMargin]);
 
 
   // --- Render ---
@@ -624,41 +627,56 @@ export default function Home() {
         {/* Controls Panel */}
         <Card className="w-full md:w-1/4 h-fit top-4 shadow-md">
           <CardHeader> <CardTitle>Controls</CardTitle> </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Upload img */}
-            <div>
-              <Label htmlFor="file-input-button" className="mb-2 block">Upload Images</Label>
-              <Button id="file-input-button" onClick={() => triggerFileUpload()} className="w-full" variant="outline">
-                <Upload className="mr-2 h-4 w-4" /> Choose Images
-              </Button>
-              <Input
-                id="file-input-main"
-                type="file"
-                ref={fileInputRef}
-                onChange={handleImageUpload}
-                multiple
-                accept={ACCEPT_STRING}
-                className="hidden"
+          <CardContent className="grid gap-4">
+            <div className="grid grid-cols-2 gap-4">
+              {/* Upload img */}
+              <div>
+                <Label htmlFor="file-input-button" className="mb-2 block">Upload Images</Label>
+                <Button id="file-input-button" onClick={() => triggerFileUpload()} className="w-full" variant="outline">
+                  <Upload className="mr-2 h-4 w-4" /> Choose Images
+                </Button>
+                <Input
+                  id="file-input-main"
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleImageUpload}
+                  multiple
+                  accept={ACCEPT_STRING}
+                  className="hidden"
+                />
+              </div>
+              {/* Page Size (Global) */}
+              <div>
+                <Label htmlFor="page-size-select" className="mb-2 block">PDF Page Size</Label>
+                <Select value={pageSize} onValueChange={setPageSize}>
+                  <SelectTrigger id="page-size-select" className="w-full">
+                    <SelectValue placeholder="Select Page Size" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="a4">A4</SelectItem>
+                    <SelectItem value="a3">A3</SelectItem>
+                    <SelectItem value="a5">A5</SelectItem>
+                    <SelectItem value="b5">B5</SelectItem>
+                    <SelectItem value="letter">Letter</SelectItem>
+                    <SelectItem value="legal">Legal</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <Separator />
+            <div className="grid gap-2">
+              <Label htmlFor="page-margin">Page Margin (pt): {pageMargin}</Label>
+              <Slider
+                id="page-margin"
+                value={[pageMargin]}
+                onValueChange={(value) => setPageMargin(value[0])}
+                min={0}
+                max={60}
+                step={1}
+                className="w-full"
               />
             </div>
             <Separator />
-            {/* Page Size (Global) */}
-            <div>
-              <Label htmlFor="page-size-select" className="mb-2 block">PDF Page Size</Label>
-              <Select value={pageSize} onValueChange={setPageSize}>
-                <SelectTrigger id="page-size-select" className="w-full">
-                  <SelectValue placeholder="Select Page Size" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="a4">A4</SelectItem>
-                  <SelectItem value="a3">A3</SelectItem>
-                  <SelectItem value="a5">A5</SelectItem>
-                  <SelectItem value="b5">B5</SelectItem>
-                  <SelectItem value="letter">Letter</SelectItem>
-                  <SelectItem value="legal">Legal</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
             {/* Page Orientation (Global) */}
             <div>
               <Label htmlFor="page-orientation-select" className="mb-2 block">PDF Orientation</Label> {/* Changed label and id */}
@@ -702,8 +720,8 @@ export default function Home() {
               </div>
             </div>
             <Separator />
-            <div className="flex flex-row md:flex-col gap-2">
-              <Button onClick={addPage} className="w-full" variant="outline"> <PlusCircle className="mr-2 h-4 w-4" /> Add Page </Button>
+            <div className="flex items-center justify-between">
+              <Button onClick={addPage} className="w-full mr-2" variant="outline"> <PlusCircle className="mr-2 h-4 w-4" /> Add Page </Button>
               <Button onClick={() => deletePage(currentPageIndex)} className="w-full" variant="destructive" disabled={pages.length <= 1}> <Trash2 className="mr-2 h-4 w-4" /> Delete Page </Button>
             </div>
             <Separator />
