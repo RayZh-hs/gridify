@@ -31,7 +31,7 @@ interface Page {
   items: (ImageItem | null)[];
   rows: number;
   cols: number;
-  orientation: 'p' | 'l';
+  orientation: 'p' | 'l'; // This property is now unused for PDF export orientation
 }
 
 const DEFAULT_ROWS = 1;
@@ -46,16 +46,20 @@ const ALL_ACCEPTED_TYPES = [...PDF_DIRECT_SUPPORTED_TYPES, ...IMAGE_TYPES_TO_CON
 const ACCEPT_STRING = ALL_ACCEPTED_TYPES.join(',') + ',.jpg,.jpeg,.png,.webp,.bmp,.gif,.tif,.tiff'; // For file input
 
 export default function Home() {
-  // Initialize first page with default orientation
+  // Initialize first page with default orientation (orientation property is unused for PDF export)
   const [pages, setPages] = useState<Page[]>([{
     id: crypto.randomUUID(),
     items: Array(DEFAULT_ROWS * DEFAULT_COLS).fill(null),
     rows: DEFAULT_ROWS,
     cols: DEFAULT_COLS,
-    orientation: DEFAULT_ORIENTATION // Initialize orientation
+    orientation: DEFAULT_ORIENTATION // Initial value for the state property (not used for PDF export orientation)
   }]);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState<string>(DEFAULT_PAGE_SIZE); // State for global page size
+  // --- State for global page orientation ---
+  const [pageOrientation, setPageOrientation] = useState<'p' | 'l'>(DEFAULT_ORIENTATION);
+  // --- End State ---
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isLoadingPDF, setIsLoadingPDF] = useState(false);
   const { toast } = useToast();
@@ -189,6 +193,7 @@ export default function Home() {
           items: Array(DEFAULT_ROWS * DEFAULT_COLS).fill(null),
           rows: DEFAULT_ROWS,
           cols: DEFAULT_COLS,
+          orientation: DEFAULT_ORIENTATION, // Still set, but not used for PDF export orientation
         };
         newPages.push(newPage);
         pagesNeedUpdate = true;
@@ -286,7 +291,7 @@ export default function Home() {
       items: Array(DEFAULT_ROWS * DEFAULT_COLS).fill(null),
       rows: DEFAULT_ROWS,
       cols: DEFAULT_COLS,
-      orientation: DEFAULT_ORIENTATION, // Set default orientation for new page
+      orientation: DEFAULT_ORIENTATION, // Still set, but not used for PDF export orientation
     };
     setPages(prevPages => [...prevPages, newPage]);
     setCurrentPageIndex(pages.length); // Navigate to the new page
@@ -322,23 +327,25 @@ export default function Home() {
     setCurrentPageIndex(prevIndex => Math.max(0, prevIndex - 1));
   };
 
-  const handleOrientationChange = (newOrientation: 'p' | 'l') => {
-    setPages(prevPages => prevPages.map((page, index) => {
-      if (index === currentPageIndex) {
-        // Create a new object for the updated page to ensure state update
-        return { ...page, orientation: newOrientation };
-      }
-      return page; // Return unchanged page otherwise
-    }));
-    toast({
-      title: "Orientation Changed",
-      description: `Page ${currentPageIndex + 1} set to ${newOrientation === 'p' ? 'Portrait' : 'Landscape'}.`,
-    });
-  };
+  // --- REMOVE handleOrientationChange ---
+  // This function is no longer needed as the UI updates the global state directly
+  // const handleOrientationChange = (newOrientation: 'p' | 'l') => {
+  //   setPages(prevPages => prevPages.map((page, index) => {
+  //     if (index === currentPageIndex) {
+  //       return { ...page, orientation: newOrientation };
+  //     }
+  //     return page;
+  //   }));
+  //   toast({
+  //     title: "Orientation Changed",
+  //     description: `Page ${currentPageIndex + 1} set to ${newOrientation === 'p' ? 'Portrait' : 'Landscape'}.`,
+  //   });
+  // };
+  // --- END REMOVE ---
 
   useEffect(() => {
     if (pages.length === 0) {
-      setPages([{ id: crypto.randomUUID(), items: Array(DEFAULT_ROWS * DEFAULT_COLS).fill(null), rows: DEFAULT_ROWS, cols: DEFAULT_COLS }]);
+      setPages([{ id: crypto.randomUUID(), items: Array(DEFAULT_ROWS * DEFAULT_COLS).fill(null), rows: DEFAULT_ROWS, cols: DEFAULT_COLS, orientation: DEFAULT_ORIENTATION }]);
       setCurrentPageIndex(0);
     } else if (currentPageIndex >= pages.length) {
       setCurrentPageIndex(pages.length - 1);
@@ -391,7 +398,20 @@ export default function Home() {
     setIsLoadingPDF(true);
     toast({ title: 'Generating PDF...', description: 'Please wait, conversion might take time for some images.' });
 
-    const pdf = new jsPDF({ orientation: 'p', unit: 'pt', format: 'a4' });
+    if (!pages || pages.length === 0) {
+      toast({ title: 'No Pages', description: 'Add some pages before exporting.', variant: 'default' });
+      setIsLoadingPDF(false);
+      return;
+    }
+
+    // --- Initialize jsPDF using the GLOBAL pageSize and GLOBAL orientation state ---
+    const pdf = new jsPDF({
+        orientation: pageOrientation, // Use the global pageOrientation state
+        unit: 'pt',
+        format: pageSize // Use the global pageSize state
+    });
+    // --- End jsPDF Initialization ---
+
 
     // --- Font Handling ---
     let fontLoaded = false;
@@ -421,6 +441,7 @@ export default function Home() {
     // --- End Font Handling ---
 
     const pageMargin = 40;
+    // --- Calculate usable dimensions based on the PDF's initialized size/orientation ---
     const usableWidth = pdf.internal.pageSize.getWidth() - 2 * pageMargin;
     const usableHeight = pdf.internal.pageSize.getHeight() - 2 * pageMargin;
     const labelAreaHeight = 30;
@@ -428,20 +449,23 @@ export default function Home() {
     try {
       for (let p = 0; p < pages.length; p++) {
         const pageData = pages[p];
-        const { rows, cols, items } = pageData;
-        const totalItemsOnPage = items.filter(item => item !== null).length;
+        const { rows, cols, items } = pageData; // Use rows/cols from pageData
 
-        if (p > 0) pdf.addPage();
+        if (p > 0) {
+            // Add page using the document's default format and orientation
+            pdf.addPage();
+        }
 
-        // Set font for the page
         if (fontLoaded) pdf.setFont(FONT_NAME, FONT_STYLE);
         else pdf.setFont('Helvetica', 'normal');
 
         // Page Number Header
         pdf.setFontSize(9); pdf.setTextColor(150);
+        // Use pdf.internal.pageSize.getWidth() which reflects the current page's width
         pdf.text(`Page ${p + 1} of ${pages.length}`, pdf.internal.pageSize.getWidth() - pageMargin, pageMargin / 2, { align: 'right' });
         pdf.setTextColor(0); pdf.setFontSize(labelFontSize);
 
+        const totalItemsOnPage = items.filter(item => item !== null).length;
         if (totalItemsOnPage === 0) {
           pdf.setFontSize(12);
           pdf.text(`Page ${p + 1} is empty`, pageMargin, pageMargin + 20);
@@ -449,6 +473,7 @@ export default function Home() {
           continue;
         }
 
+        // Calculate cell dimensions based on the CURRENT page's rows/cols and usable dimensions
         const cellWidth = usableWidth / cols;
         const cellHeight = usableHeight / rows;
         const availableCellHeight = cellHeight - 5;
@@ -479,47 +504,38 @@ export default function Home() {
           const cellY = pageMargin + rowIndex * cellHeight;
 
           try {
-            let imageDataForPdf = item.src; // Start with original src
-            let imageFormatForPdf = 'JPEG'; // Default, will be updated
+            let imageDataForPdf = item.src;
+            let imageFormatForPdf = 'JPEG';
 
-            // *** CONVERSION LOGIC ***
             if (PDF_DIRECT_SUPPORTED_TYPES.includes(item.fileType)) {
-              // Directly supported type
               if (item.fileType.includes('png')) imageFormatForPdf = 'PNG';
               else if (item.fileType.includes('webp')) imageFormatForPdf = 'WEBP';
-              else imageFormatForPdf = 'JPEG'; // Default for image/jpeg
+              else imageFormatForPdf = 'JPEG';
             } else if (IMAGE_TYPES_TO_CONVERT.includes(item.fileType)) {
-              // Needs conversion (BMP, GIF, TIFF)
               try {
                 const convertedDataUrl = await convertImageToPNG(item.src, item.fileType);
-                imageDataForPdf = convertedDataUrl; // Use the converted data
-                // Check if fallback to JPEG occured
+                imageDataForPdf = convertedDataUrl;
                 if (convertedDataUrl.startsWith('data:image/jpeg')) {
                   imageFormatForPdf = 'JPEG';
                 } else {
-                  imageFormatForPdf = 'PNG'; // Assume PNG otherwise
+                  imageFormatForPdf = 'PNG';
                 }
               } catch (conversionError) {
                 console.error(`Failed to convert ${item.fileType} image ${item.id}:`, conversionError);
                 toast({ title: 'Image Conversion Failed', description: `Could not convert image ${i + 1} (${item.fileType}) for PDF. Skipping.`, variant: 'destructive' });
-                // Draw error placeholder instead of throwing? Or just skip. Let's skip.
-                continue; // Skip this image
+                continue;
               }
             } else {
-              // Should not happen if upload validation is correct, but as a safeguard:
               console.warn(`Unexpected file type encountered during PDF export: ${item.fileType}. Skipping image ${item.id}.`);
               toast({ title: 'Unexpected Image Type', description: `Skipping image ${i + 1} due to unexpected type: ${item.fileType}.`, variant: 'warning' });
-              continue; // Skip this image
+              continue;
             }
-            // *** END CONVERSION LOGIC ***
 
-
-            // Load image (original or converted) to get dimensions
             const img = await new Promise<HTMLImageElement>((resolve, reject) => {
               const image = new Image();
               image.onload = () => resolve(image);
               image.onerror = (err) => reject(new Error(`Failed to load image data for PDF: ${item.id} (Type: ${imageFormatForPdf})`));
-              image.src = imageDataForPdf; // Use the potentially converted data URL
+              image.src = imageDataForPdf;
             });
 
             const imgWidth = img.naturalWidth;
@@ -542,14 +558,11 @@ export default function Home() {
             const drawX = cellX + (cellWidth - drawWidth) / 2;
             const drawY = cellY + imgPadding;
 
-            // Set font before adding image/text
             if (fontLoaded) pdf.setFont(FONT_NAME, FONT_STYLE); else pdf.setFont('Helvetica', 'normal');
             pdf.setFontSize(labelFontSize);
 
-            // Add the image (potentially converted) to the PDF
             pdf.addImage(imageDataForPdf, imageFormatForPdf, drawX, drawY, drawWidth, drawHeight);
 
-            // Add label
             if (item.label) {
               const labelX = cellX + cellWidth / 2;
               const labelY = drawY + drawHeight + 5;
@@ -564,7 +577,6 @@ export default function Home() {
 
           } catch (imgOrPdfError) {
             console.error(`Error processing image ${item.id} for PDF:`, imgOrPdfError);
-            // Draw error placeholder in PDF cell
             const errorX = cellX + 5;
             const errorY = cellY + 20;
             if (fontLoaded) pdf.setFont(FONT_NAME, FONT_STYLE); else pdf.setFont('Helvetica', 'normal');
@@ -583,12 +595,12 @@ export default function Home() {
     } finally {
       setIsLoadingPDF(false);
     }
-  }, [pages, currentPageIndex, toast, isLoadingPDF]); // Keep dependencies
+  }, [pages, pageSize, pageOrientation, toast, isLoadingPDF]); // <-- Ensure pageOrientation is in dependencies
 
 
   // --- Render ---
   if (!currentPage) {
-    return ( /* ... Loading spinner ... */
+    return (
       <div className="flex justify-center items-center min-h-screen">
         <Loader2 className="h-16 w-16 animate-spin text-accent" />
         <p className="ml-4 text-muted-foreground">Loading page...</p>
@@ -621,7 +633,6 @@ export default function Home() {
                 ref={fileInputRef}
                 onChange={handleImageUpload}
                 multiple
-                // *** UPDATED ACCEPT STRING ***
                 accept={ACCEPT_STRING}
                 className="hidden"
               />
@@ -641,6 +652,19 @@ export default function Home() {
                   <SelectItem value="b5">B5</SelectItem>
                   <SelectItem value="letter">Letter</SelectItem>
                   <SelectItem value="legal">Legal</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {/* Page Orientation (Global) */}
+            <div>
+              <Label htmlFor="page-orientation-select" className="mb-2 block">PDF Orientation</Label> {/* Changed label and id */}
+              <Select value={pageOrientation} onValueChange={setPageOrientation}>
+                <SelectTrigger id="page-orientation-select" className="w-full"> {/* Changed id */}
+                  <SelectValue placeholder="Select Orientation" /> {/* Changed placeholder */}
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="p">Portrait</SelectItem>
+                  <SelectItem value="l">Landscape</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -681,21 +705,7 @@ export default function Home() {
             <CardHeader className="flex flex-row justify-between items-center border-b pb-4">
               <CardTitle>Page {currentPageIndex + 1} of {pages.length}</CardTitle>
               <div className="flex gap-2 items-center"> {/* Wrap controls */}
-                {/* Orientation Selector (Current Page) */}
-                {currentPage && ( // Ensure currentPage exists
-                  <Select
-                    value={currentPage.orientation}
-                    onValueChange={(value: 'p' | 'l') => handleOrientationChange(value)}
-                  >
-                    <SelectTrigger className="w-[120px]">
-                      <SelectValue placeholder="Orientation" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="p">Portrait</SelectItem>
-                      <SelectItem value="l">Landscape</SelectItem>
-                    </SelectContent>
-                  </Select>
-                )}
+                {/* REMOVED Per-Page Orientation Selector */}
                 {/* Page Navigation */}
                 <Button onClick={goToPrevPage} disabled={currentPageIndex === 0} size="icon" variant="outline"> <ArrowLeft className="h-4 w-4" /> <span className="sr-only">Prev</span> </Button>
                 <Button onClick={goToNextPage} disabled={currentPageIndex >= pages.length - 1} size="icon" variant="outline"> <ArrowRight className="h-4 w-4" /> <span className="sr-only">Next</span> </Button>

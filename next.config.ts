@@ -28,6 +28,10 @@ const nextConfig: NextConfig = {
      // Instead of allowing all data URLs, it's often better to handle base64 directly in <img> tags
      // For jsPDF, it handles base64 directly, so no specific Next.js config is needed for jsPDF itself.
   },
+
+  // --- Add these lines for static export and GitHub Pages ---
+  output: 'export', // Enables static export
+  basePath: process.env.NODE_ENV === 'production' ? '/gridify' : '',
 };
 
 export default nextConfig;
