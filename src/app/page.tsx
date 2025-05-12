@@ -7,17 +7,18 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardFooter, CardDescription } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Upload, Grid, FileText, Download, PlusCircle, Trash2, ArrowLeft, ArrowRight, ImagePlus, Loader2 } from 'lucide-react';
 import jsPDF from 'jspdf';
+import { Checkbox } from "@/components/ui/checkbox";
+import { Separator } from '@/components/ui/separator';
 // --- Noto Sans Font Import ---
 import { NotoSansSC_Regular } from '@/lib/fonts/NotoSansSC-Regular-normal.js'; // Assuming you fixed this based on previous steps
 console.info("Font Base64 Length:", NotoSansSC_Regular?.length ?? 'Not Loaded');
 // --- End Noto Sans Font Import ---
 
 import { useToast } from '@/hooks/use-toast';
-import { Separator } from '@/components/ui/separator';
 
 interface ImageItem {
   id: string;
@@ -59,6 +60,7 @@ export default function Home() {
   // --- State for global page orientation ---
   const [pageOrientation, setPageOrientation] = useState<'p' | 'l'>(DEFAULT_ORIENTATION);
   // --- End State ---
+  const [showPageNumbers, setShowPageNumbers] = useState(true); // Added state for page numbers
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isLoadingPDF, setIsLoadingPDF] = useState(false);
@@ -326,7 +328,7 @@ export default function Home() {
   const goToPrevPage = () => {
     setCurrentPageIndex(prevIndex => Math.max(0, prevIndex - 1));
   };
-
+  
   // --- REMOVE handleOrientationChange ---
   // This function is no longer needed as the UI updates the global state directly
   // const handleOrientationChange = (newOrientation: 'p' | 'l') => {
@@ -460,10 +462,12 @@ export default function Home() {
         else pdf.setFont('Helvetica', 'normal');
 
         // Page Number Header
-        pdf.setFontSize(9); pdf.setTextColor(150);
-        // Use pdf.internal.pageSize.getWidth() which reflects the current page's width
-        pdf.text(`Page ${p + 1} of ${pages.length}`, pdf.internal.pageSize.getWidth() - pageMargin, pageMargin / 2, { align: 'right' });
-        pdf.setTextColor(0); pdf.setFontSize(labelFontSize);
+        if (showPageNumbers) { // Conditional rendering of page numbers
+          pdf.setFontSize(9); pdf.setTextColor(150);
+          // Use pdf.internal.pageSize.getWidth() which reflects the current page's width
+          pdf.text(`Page ${p + 1} of ${pages.length}`, pdf.internal.pageSize.getWidth() - pageMargin, pageMargin / 2, { align: 'right' });
+          pdf.setTextColor(0); pdf.setFontSize(labelFontSize);
+        }
 
         const totalItemsOnPage = items.filter(item => item !== null).length;
         if (totalItemsOnPage === 0) {
@@ -595,7 +599,7 @@ export default function Home() {
     } finally {
       setIsLoadingPDF(false);
     }
-  }, [pages, pageSize, pageOrientation, toast, isLoadingPDF]); // <-- Ensure pageOrientation is in dependencies
+  }, [pages, pageSize, pageOrientation, toast, isLoadingPDF, showPageNumbers]); // <-- Ensure showPageNumbers is in dependencies
 
 
   // --- Render ---
@@ -667,6 +671,17 @@ export default function Home() {
                   <SelectItem value="l">Landscape</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            {/* Add Page Number Checkbox */}
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="show-page-numbers"
+                checked={showPageNumbers}
+                onCheckedChange={(checked) => setShowPageNumbers(checked as boolean)}
+              />
+              <Label htmlFor="show-page-numbers" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                Add page numbers (e.g., Page 1 of 2)
+              </Label>
             </div>
             <Separator />
             <div>
