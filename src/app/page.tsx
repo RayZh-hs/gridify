@@ -627,13 +627,12 @@ export default function Home() {
         {/* Controls Panel */}
         <Card className="w-full md:w-1/4 h-fit top-4 shadow-md">
           <CardHeader> <CardTitle>Controls</CardTitle> </CardHeader>
-          <CardContent className="grid gap-4">
-            <div className="grid grid-cols-2 gap-4">
+          <CardContent className="space-y-4">
               {/* Upload img */}
               <div>
                 <Label htmlFor="file-input-button" className="mb-2 block">Upload Images</Label>
                 <Button id="file-input-button" onClick={() => triggerFileUpload()} className="w-full" variant="outline">
-                  <Upload className="mr-2 h-4 w-4" /> Choose Images
+                  <Upload className="mr-2 h-4 w-4" /> 
                 </Button>
                 <Input
                   id="file-input-main"
@@ -645,9 +644,10 @@ export default function Home() {
                   className="hidden"
                 />
               </div>
+              <div className="grid grid-cols-2 gap-2">
               {/* Page Size (Global) */}
               <div>
-                <Label htmlFor="page-size-select" className="mb-2 block">PDF Page Size</Label>
+                <Label htmlFor="page-size-select" className="mb-2 block">Page Size</Label>
                 <Select value={pageSize} onValueChange={setPageSize}>
                   <SelectTrigger id="page-size-select" className="w-full">
                     <SelectValue placeholder="Select Page Size" />
@@ -661,7 +661,20 @@ export default function Home() {
                     <SelectItem value="legal">Legal</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
+            </div>
+            {/* Page Orientation (Global) */}
+            <div>
+              <Label htmlFor="page-orientation-select" className="mb-2 block">Orientation</Label> {/* Changed label and id */}
+              <Select value={pageOrientation} onValueChange={setPageOrientation}>
+                <SelectTrigger id="page-orientation-select" className="w-full"> {/* Changed id */}
+                  <SelectValue placeholder="Select Orientation" /> {/* Changed placeholder */}
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="p">Portrait</SelectItem>
+                  <SelectItem value="l">Landscape</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             </div>
             <Separator />
             <div className="grid gap-2">
@@ -677,19 +690,6 @@ export default function Home() {
               />
             </div>
             <Separator />
-            {/* Page Orientation (Global) */}
-            <div>
-              <Label htmlFor="page-orientation-select" className="mb-2 block">PDF Orientation</Label> {/* Changed label and id */}
-              <Select value={pageOrientation} onValueChange={setPageOrientation}>
-                <SelectTrigger id="page-orientation-select" className="w-full"> {/* Changed id */}
-                  <SelectValue placeholder="Select Orientation" /> {/* Changed placeholder */}
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="p">Portrait</SelectItem>
-                  <SelectItem value="l">Landscape</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
             {/* Add Page Number Checkbox */}
             <div className="flex items-center space-x-2">
               <Checkbox
@@ -697,7 +697,7 @@ export default function Home() {
                 checked={showPageNumbers}
                 onCheckedChange={(checked) => setShowPageNumbers(checked as boolean)}
               />
-              <Label htmlFor="show-page-numbers" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+              <Label htmlFor="show-page-numbers" className="text-xs font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                 Add page numbers (e.g., Page 1 of 2)
               </Label>
             </div>
@@ -720,9 +720,13 @@ export default function Home() {
               </div>
             </div>
             <Separator />
-            <div className="flex items-center justify-between">
-              <Button onClick={addPage} className="w-full mr-2" variant="outline"> <PlusCircle className="mr-2 h-4 w-4" /> Add Page </Button>
-              <Button onClick={() => deletePage(currentPageIndex)} className="w-full" variant="destructive" disabled={pages.length <= 1}> <Trash2 className="mr-2 h-4 w-4" /> Delete Page </Button>
+            <div className="grid grid-cols-2 gap-1">
+              <Button onClick={addPage} className="w-full text-xs px-2" variant="outline">
+                <PlusCircle className="mr-1 h-3 w-3" /> Add Page
+              </Button>
+              <Button onClick={() => deletePage(currentPageIndex)} className="w-full text-xs px-2" variant="destructive" disabled={pages.length <= 1}>
+                <Trash2 className="mr-1 h-3 w-3" /> Delete Page
+              </Button>
             </div>
             <Separator />
             <Button onClick={exportToPDF} className="w-full bg-accent text-accent-foreground hover:bg-accent/90" disabled={isLoadingPDF || pages.length === 0 || pages.every(p => p.items.every(item => item === null))}>
